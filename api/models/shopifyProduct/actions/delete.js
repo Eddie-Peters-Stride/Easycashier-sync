@@ -19,6 +19,7 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     api,
     logger,
     trigger,
+    record,
     fallbackEvent: "deleted",
   });
 };

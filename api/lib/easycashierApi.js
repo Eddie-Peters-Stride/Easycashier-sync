@@ -142,6 +142,7 @@ const normalizeShopifyVariant = (variant) => ({
   price: typeof variant?.price === "object" ? variant.price?.amount : variant?.price ?? null,
   barcode: variant?.barcode ?? null,
   taxable: variant?.taxable ?? null,
+  inventoryQuantity: variant?.inventoryQuantity ?? null,
 });
 
 const productRowsFromPayload = (payload) => {
@@ -182,6 +183,7 @@ const buildProductRows = ({ productId, productName, variants }) => {
     pris: variant.price,
     ean: variant.barcode,
     moms: vatForTaxable(variant.taxable),
+    inventoryQuantity: variant.inventoryQuantity,
   }));
 };
 
@@ -235,6 +237,7 @@ const fetchFreshShopifyProductRows = async ({ connections, payload }) => {
             barcode
             taxable
             price
+            inventoryQuantity
           }
           pageInfo {
             hasNextPage
@@ -305,6 +308,25 @@ const articleNumberFromProduct = (product) => {
   return String(articleNumber);
 };
 
+function optionalNumberFromValue(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  const number = Number(String(value).replace(",", "."));
+
+  return Number.isFinite(number) ? number : value;
+}
+
+const inventoryQuantityFromProduct = (product) =>
+  optionalNumberFromValue(
+    product?.inventoryQuantity ??
+      product?.inventory_quantity ??
+      product?.available ??
+      product?.stockQuantity ??
+      product?.quantity
+  );
+
 const productDetailsForLog = (product) => ({
   shopifyProductId: product?.shopifyProductId ?? null,
   shopifyVariantId: product?.shopifyVariantId ?? null,
@@ -314,6 +336,7 @@ const productDetailsForLog = (product) => ({
   price: product?.pris ?? product?.price ?? null,
   ean: product?.ean ?? product?.barcode ?? null,
   vat: product?.moms ?? null,
+  inventoryQuantity: inventoryQuantityFromProduct(product),
 });
 
 const articleNumbersForLookup = (product) => {
@@ -345,16 +368,6 @@ const numberFromValue = (value, defaultValue = 0) => {
   return Number.isFinite(number) ? number : defaultValue;
 };
 
-const optionalNumberFromValue = (value) => {
-  if (value == null || value === "") {
-    return null;
-  }
-
-  const number = Number(String(value).replace(",", "."));
-
-  return Number.isFinite(number) ? number : value;
-};
-
 const vatRateFromProduct = (product) => {
   const vat = numberFromValue(product?.moms, 0);
 
@@ -367,40 +380,55 @@ const configuredNumber = (envVarName, defaultValue) => {
   return numberFromValue(value, defaultValue);
 };
 
-const buildEasyCashierArticlePayload = (product) => ({
-  articleNumber: articleNumberFromProduct(product),
-  description: product?.produktnamn ?? product?.title ?? product?.description ?? "",
-  barcode: optionalNumberFromValue(product?.ean ?? product?.barcode),
-  barcode2: null,
-  articleType: "PRODUCT",
-  retailPriceIncludingVat: numberFromValue(product?.pris ?? product?.price, 0),
-  costPriceExcludingVat: configuredNumber("EASYCASHIER_DEFAULT_COST_PRICE_EXCLUDING_VAT", 0),
-  vat: vatRateFromProduct(product),
-  accumulative: false,
-  askForQuantity: false,
-  addTextWhenSold: false,
-  stockItem: false,
-  storageArea: null,
-  supplierArticleNumber: "",
-  articleGroupId: null,
-  accountNumber: configuredNumber("EASYCASHIER_ACCOUNT_NUMBER", 3051),
-  supplierNumber: null,
-  webshop: false,
-  webshopArticleId: null,
-  erp: false,
-  erpArticleId: null,
-  specialOfferStartDate: null,
-  specialOfferStopDate: null,
-  specialOfferDiscount: null,
-  specialOfferDiscountType: null,
-  articleStorePrices: [],
-  stockEntries: [
-    {
-      storeNumber: configuredNumber("EASYCASHIER_STORE_NUMBER", 1),
-    },
-  ],
-  averageCostPriceExcludingVat: 0,
-});
+const configuredString = (envVarName, defaultValue) => process.env[envVarName] || defaultValue;
+
+const buildStockEntry = (product) => {
+  const stockEntry = {
+    storeNumber: configuredNumber("EASYCASHIER_STORE_NUMBER", 1),
+  };
+  const inventoryQuantity = inventoryQuantityFromProduct(product);
+
+  if (inventoryQuantity != null) {
+    stockEntry[configuredString("EASYCASHIER_STOCK_ENTRY_QUANTITY_FIELD", "quantity")] = inventoryQuantity;
+  }
+
+  return stockEntry;
+};
+
+const buildEasyCashierArticlePayload = (product) => {
+  const inventoryQuantity = inventoryQuantityFromProduct(product);
+
+  return {
+    articleNumber: articleNumberFromProduct(product),
+    description: product?.produktnamn ?? product?.title ?? product?.description ?? "",
+    barcode: optionalNumberFromValue(product?.ean ?? product?.barcode),
+    barcode2: null,
+    articleType: "PRODUCT",
+    retailPriceIncludingVat: numberFromValue(product?.pris ?? product?.price, 0),
+    costPriceExcludingVat: configuredNumber("EASYCASHIER_DEFAULT_COST_PRICE_EXCLUDING_VAT", 0),
+    vat: vatRateFromProduct(product),
+    accumulative: false,
+    askForQuantity: false,
+    addTextWhenSold: false,
+    stockItem: inventoryQuantity != null,
+    storageArea: null,
+    supplierArticleNumber: "",
+    articleGroupId: null,
+    accountNumber: configuredNumber("EASYCASHIER_ACCOUNT_NUMBER", 3051),
+    supplierNumber: null,
+    webshop: false,
+    webshopArticleId: null,
+    erp: false,
+    erpArticleId: null,
+    specialOfferStartDate: null,
+    specialOfferStopDate: null,
+    specialOfferDiscount: null,
+    specialOfferDiscountType: null,
+    articleStorePrices: [],
+    stockEntries: [buildStockEntry(product)],
+    averageCostPriceExcludingVat: 0,
+  };
+};
 
 const parseJsonResponse = async (response) => {
   const text = await response.text();

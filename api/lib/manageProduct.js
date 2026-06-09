@@ -43,6 +43,7 @@ const normalizeRawVariant = (variant) => ({
   barcode: variant.barcode ?? null,
   taxable: variant.taxable ?? null,
   position: variant.position ?? null,
+  inventoryQuantity: variant.inventory_quantity ?? variant.inventoryQuantity ?? null,
 });
 
 const variantsFromWebhook = (trigger) => {
@@ -83,6 +84,7 @@ const buildRows = (variants, productName, shopifyProductId) => {
     pris: variant.price,
     ean: variant.barcode,
     moms: vatForTaxable(variant.taxable),
+    inventoryQuantity: variant.inventoryQuantity,
   }));
 };
 
@@ -102,6 +104,29 @@ export const buildShopifyProductEasyCashierPayload = ({ trigger, event }) => {
     products: buildRows(variants, productName, shopifyProductId),
   };
 };
+
+const productGidFromRecord = (record) => {
+  if (typeof record?.id === "string" && record.id.startsWith("gid://")) {
+    return record.id;
+  }
+
+  if (record?.id != null) {
+    return `gid://shopify/Product/${record.id}`;
+  }
+
+  return null;
+};
+
+const buildShopifyProductRecordEasyCashierPayload = ({ record, trigger, event }) => ({
+  event,
+  topic: trigger?.topic ?? null,
+  shopId: record?.shopId ?? trigger?.shopId ?? null,
+  shopDomain: trigger?.shopDomain ?? null,
+  shopifyProductId: record?.id == null ? null : String(record.id),
+  shopifyProductGid: productGidFromRecord(record),
+  produktnamn: record?.title ?? null,
+  products: [],
+});
 
 export const enqueueShopifyProductEasyCashierPayload = async ({ api, logger, payload }) => {
   if (!payload) {
@@ -134,15 +159,228 @@ export const enqueueShopifyProductEasyCashierPayload = async ({ api, logger, pay
   );
 };
 
-export const enqueueShopifyProductEasyCashierSync = async ({ api, logger, trigger, fallbackEvent }) => {
-  if (!isProductWebhookTrigger(trigger)) {
+export const enqueueShopifyProductEasyCashierSync = async ({ api, logger, trigger, record, fallbackEvent }) => {
+  if (isProductWebhookTrigger(trigger)) {
+    const payload = buildShopifyProductEasyCashierPayload({
+      trigger,
+      event: productEventForTrigger(trigger, fallbackEvent),
+    });
+
+    await enqueueShopifyProductEasyCashierPayload({ api, logger, payload });
     return;
   }
 
-  const payload = buildShopifyProductEasyCashierPayload({
+  if (!record) {
+    return;
+  }
+
+  const payload = buildShopifyProductRecordEasyCashierPayload({
+    record,
     trigger,
-    event: productEventForTrigger(trigger, fallbackEvent),
+    event: fallbackEvent,
   });
+
+  await enqueueShopifyProductEasyCashierPayload({ api, logger, payload });
+};
+
+const idFromGid = (gid) => {
+  if (typeof gid !== "string") {
+    return null;
+  }
+
+  return gid.split("/").pop() || null;
+};
+
+const graphqlGid = (type, id) => {
+  if (!id) {
+    return null;
+  }
+
+  const stringId = String(id);
+
+  if (stringId.startsWith("gid://")) {
+    return stringId;
+  }
+
+  return `gid://shopify/${type}/${stringId}`;
+};
+
+const parseShopifyGraphqlResult = (result, lookupName) => {
+  const data = result?.data ?? result;
+  const errors = data?.errors ?? result?.errors;
+
+  if (Array.isArray(errors) && errors.length > 0) {
+    throw new Error(`${lookupName} failed: ${errors.map((error) => error.message).join(", ")}`);
+  }
+
+  return data;
+};
+
+const shopifyClientForTrigger = async ({ connections, trigger }) => {
+  if (connections?.shopify?.current) {
+    return connections.shopify.current;
+  }
+
+  if (trigger?.shopId && connections?.shopify?.forShopId) {
+    return await connections.shopify.forShopId(trigger.shopId);
+  }
+
+  return null;
+};
+
+const availableInventoryFromPayload = (payload) => {
+  const quantity = payload?.available ?? payload?.inventory_quantity ?? payload?.inventoryQuantity ?? null;
+
+  if (quantity == null || quantity === "") {
+    return null;
+  }
+
+  const number = Number(quantity);
+
+  return Number.isFinite(number) ? number : quantity;
+};
+
+const normalizeShopifyVariantForInventory = (variant, inventoryQuantity) => ({
+  id: variant?.legacyResourceId == null ? idFromGid(variant?.id) : String(variant.legacyResourceId),
+  gid: variant?.id ?? null,
+  sku: variant?.sku ?? null,
+  price: typeof variant?.price === "object" ? variant.price?.amount : variant?.price ?? null,
+  barcode: variant?.barcode ?? null,
+  taxable: variant?.taxable ?? null,
+  inventoryQuantity: inventoryQuantity ?? variant?.inventoryQuantity ?? null,
+});
+
+const buildInventoryWebhookPayload = ({ trigger, product, variant, inventoryQuantity }) => {
+  const normalizedVariant = normalizeShopifyVariantForInventory(variant, inventoryQuantity);
+  const productName = product?.title ?? null;
+  const shopifyProductId = product?.legacyResourceId == null ? idFromGid(product?.id) : String(product.legacyResourceId);
+
+  return {
+    event: "updated",
+    topic: trigger?.topic ?? null,
+    shopId: trigger?.shopId ?? null,
+    shopDomain: trigger?.shopDomain ?? null,
+    shopifyProductId,
+    shopifyProductGid: product?.id ?? null,
+    produktnamn: productName,
+    products: buildRows([normalizedVariant], productName, shopifyProductId),
+  };
+};
+
+const fetchVariantForInventoryItem = async ({ connections, trigger, inventoryItemGid }) => {
+  const shopify = await shopifyClientForTrigger({ connections, trigger });
+
+  if (!shopify) {
+    throw new Error("Missing Shopify connection for EasyCashier inventory sync");
+  }
+
+  const query = `
+    query EasyCashierInventoryItem($id: ID!) {
+      inventoryItem(id: $id) {
+        id
+        legacyResourceId
+        sku
+        variant {
+          id
+          legacyResourceId
+          sku
+          barcode
+          taxable
+          price
+          inventoryQuantity
+          product {
+            id
+            legacyResourceId
+            title
+          }
+        }
+      }
+    }
+  `;
+  const result = await shopify.graphql(query, { id: inventoryItemGid });
+  const data = parseShopifyGraphqlResult(result, "Shopify inventory item lookup");
+  const variant = data?.inventoryItem?.variant;
+
+  if (!variant?.product) {
+    throw new Error(`No Shopify variant found for inventory item ${inventoryItemGid}`);
+  }
+
+  return {
+    product: variant.product,
+    variant: {
+      ...variant,
+      sku: variant.sku ?? data.inventoryItem?.sku ?? null,
+    },
+  };
+};
+
+const inventoryItemGidFromPayload = (payload) =>
+  graphqlGid("InventoryItem", payload?.inventory_item_id ?? payload?.inventoryItemId);
+
+export const enqueueShopifyInventoryLevelEasyCashierSync = async ({ api, logger, connections, trigger }) => {
+  if (trigger?.type !== "shopify_webhook" || trigger.topic !== "inventory_levels/update") {
+    return;
+  }
+
+  const payload = trigger.payload ?? {};
+  const inventoryItemGid = inventoryItemGidFromPayload(payload);
+
+  if (!inventoryItemGid) {
+    logger.warn(
+      {
+        topic: trigger.topic,
+        payload,
+      },
+      "Skipped EasyCashier inventory sync because Shopify webhook did not include an inventory item id"
+    );
+    return;
+  }
+
+  const { product, variant } = await fetchVariantForInventoryItem({
+    connections,
+    trigger,
+    inventoryItemGid,
+  });
+
+  const easyCashierPayload = buildInventoryWebhookPayload({
+    trigger,
+    product,
+    variant,
+    inventoryQuantity: availableInventoryFromPayload(payload),
+  });
+
+  await enqueueShopifyProductEasyCashierPayload({ api, logger, payload: easyCashierPayload });
+};
+
+export const enqueueShopifyProductVariantInventoryEasyCashierSync = async ({ api, logger, trigger, record }) => {
+  const inventoryChanged =
+    typeof record?.changed === "function" ? record.changed("inventoryQuantity") : record?.inventoryQuantity != null;
+
+  if (!inventoryChanged || isProductWebhookTrigger(trigger)) {
+    return;
+  }
+
+  if (!record?.productId) {
+    logger.warn(
+      {
+        variantId: record?.id ?? null,
+        shopId: record?.shopId ?? trigger?.shopId ?? null,
+      },
+      "Skipped EasyCashier variant inventory sync because the Shopify product id was missing"
+    );
+    return;
+  }
+
+  const payload = {
+    event: "updated",
+    topic: trigger?.topic ?? null,
+    shopId: record?.shopId ?? trigger?.shopId ?? null,
+    shopDomain: trigger?.shopDomain ?? null,
+    shopifyProductId: String(record.productId),
+    shopifyProductGid: graphqlGid("Product", record.productId),
+    produktnamn: null,
+    products: [],
+  };
 
   await enqueueShopifyProductEasyCashierPayload({ api, logger, payload });
 };

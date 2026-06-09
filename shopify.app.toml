@@ -5,8 +5,12 @@ name = "easycashier-sync"
 application_url = "https://easycashier-sync.gadget.app/api/shopify/install-or-render"
 embedded = true
 
+handle = "easycashier-sync"
 [auth]
 redirect_urls = [ "https://easycashier-sync.gadget.app/api/connections/auth/shopify/callback" ]
+
+[access_scopes]
+scopes = "read_products,read_inventory"
 
 [webhooks]
 api_version = "2026-04"
@@ -14,4 +18,27 @@ api_version = "2026-04"
 [[webhooks.subscriptions]]
 compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 uri = "https://webhooks.gadget-services.net/shopify/v1?domain=easycashier-sync.gadget.app"
-topics = [ "shop/update", "app/uninstalled" ]
+topics = [ "collections/create", "collections/update", "collections/delete", "shop/update", "app/uninstalled" ]
+
+# Trigger key: shopifyproduct-create
+[[webhooks.subscriptions]]
+uri = "https://webhooks.gadget-services.net/shopify/v1/shopifyproduct-create?domain=easycashier-sync.gadget.app"
+topics = [ "products/create", "products/update" ]
+
+# Trigger key: shopifyproduct-delete
+[[webhooks.subscriptions]]
+uri = "https://webhooks.gadget-services.net/shopify/v1/shopifyproduct-delete?domain=easycashier-sync.gadget.app"
+topics = [ "products/delete" ]
+filter = ""
+
+# Trigger key: shopifyproduct-update
+[[webhooks.subscriptions]]
+uri = "https://webhooks.gadget-services.net/shopify/v1/shopifyproduct-update?domain=easycashier-sync.gadget.app"
+topics = [ "products/update" ]
+filter = ""
+
+# Trigger key: shopifyinventorylevel-update
+[[webhooks.subscriptions]]
+uri = "https://webhooks.gadget-services.net/shopify/v1/shopifyinventorylevel-update?domain=easycashier-sync.gadget.app"
+topics = [ "inventory_levels/update" ]
+filter = ""

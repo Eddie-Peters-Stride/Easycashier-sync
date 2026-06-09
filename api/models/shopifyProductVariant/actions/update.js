@@ -1,5 +1,6 @@
 import { applyParams, save, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
+import { enqueueShopifyProductVariantInventoryEasyCashierSync } from "../../../lib/manageProduct.js";
 
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections }) => {
@@ -9,8 +10,13 @@ export const run = async ({ params, record, logger, api, connections }) => {
 };
 
 /** @type { ActionOnSuccess } */
-export const onSuccess = async ({ params, record, logger, api, connections }) => {
-  // Your logic goes here
+export const onSuccess = async ({ params, record, logger, api, connections, trigger }) => {
+  await enqueueShopifyProductVariantInventoryEasyCashierSync({
+    api,
+    logger,
+    trigger,
+    record,
+  });
 };
 
 /** @type { ActionOptions } */
