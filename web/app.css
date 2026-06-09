@@ -1,0 +1,130 @@
+.sync-log-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #616161;
+  font-size: 14px;
+}
+
+.sync-log-pagination {
+  display: flex;
+  gap: 8px;
+}
+
+.sync-log-pagination button,
+.sync-log-toggle {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid #c9cccf;
+  background: #ffffff;
+  color: #202223;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sync-log-pagination button:disabled {
+  color: #8c9196;
+  background: #f6f6f7;
+  cursor: not-allowed;
+}
+
+.sync-log-table-wrap {
+  overflow-x: auto;
+}
+
+.sync-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.sync-log-table th,
+.sync-log-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e3e3e3;
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.sync-log-table th {
+  color: #616161;
+  font-weight: 600;
+}
+
+.sync-log-row-expanded td {
+  border-bottom-color: #c9cccf;
+}
+
+.sync-log-status {
+  text-transform: capitalize;
+}
+
+.sync-log-status-success {
+  color: #0a7a43;
+}
+
+.sync-log-status-failed {
+  color: #b42318;
+}
+
+.sync-log-detail-cell {
+  background: #f6f6f7;
+  white-space: normal;
+}
+
+.sync-log-detail-panel {
+  display: grid;
+  gap: 14px;
+  max-width: 100%;
+}
+
+.sync-log-error-block {
+  padding: 12px;
+  border-left: 3px solid #b42318;
+  background: #fff4f2;
+  color: #202223;
+}
+
+.sync-log-request {
+  display: grid;
+  gap: 10px;
+}
+
+.sync-log-request-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #616161;
+  font-size: 13px;
+}
+
+.sync-log-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.sync-log-detail-label {
+  margin-bottom: 6px;
+  color: #616161;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.sync-log-detail-panel pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #dcdfe4;
+  color: #202223;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

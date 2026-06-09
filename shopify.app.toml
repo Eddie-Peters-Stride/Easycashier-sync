@@ -1,0 +1,17 @@
+# Learn more about working with Shopify TOML files with Gadget at https://docs.gadget.dev/guides/plugins/shopify/advanced-topics/shopify-app-toml
+
+client_id = "356eddd2e9f03c1fb34d55e9b406ff73"
+name = "easycashier-sync"
+application_url = "https://easycashier-sync.gadget.app/api/shopify/install-or-render"
+embedded = true
+
+[auth]
+redirect_urls = [ "https://easycashier-sync.gadget.app/api/connections/auth/shopify/callback" ]
+
+[webhooks]
+api_version = "2026-04"
+
+[[webhooks.subscriptions]]
+compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+uri = "https://webhooks.gadget-services.net/shopify/v1?domain=easycashier-sync.gadget.app"
+topics = [ "shop/update", "app/uninstalled" ]
