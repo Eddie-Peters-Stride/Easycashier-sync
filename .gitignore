@@ -10,3 +10,4 @@ extensions/**/generated
 shopify.app.*.toml
 .env.*
 .shopify/
+.github/workflows/
