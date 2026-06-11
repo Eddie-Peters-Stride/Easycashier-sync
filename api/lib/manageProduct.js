@@ -275,6 +275,16 @@ const availableInventoryFromPayload = (payload) => {
   return Number.isFinite(number) ? number : quantity;
 };
 
+const normalizeSkuValue = (sku) => {
+  if (sku == null) {
+    return null;
+  }
+
+  const normalizedSku = String(sku).trim();
+
+  return normalizedSku === "" ? null : normalizedSku;
+};
+
 const normalizeShopifyVariantForInventory = (variant, inventoryQuantity) => ({
   id: variant?.legacyResourceId == null ? idFromGid(variant?.id) : String(variant.legacyResourceId),
   gid: variant?.id ?? null,
@@ -402,7 +412,175 @@ export const enqueueShopifyInventoryLevelEasyCashierSync = async ({ api, logger,
   await enqueueShopifyProductEasyCashierPayload({ api, logger, payload: easyCashierPayload });
 };
 
-export const enqueueShopifyProductVariantInventoryEasyCashierSync = async ({ api, logger, trigger, record }) => {
+const buildVariantSkuChangeBasePayload = ({ trigger, record, oldSku, newSku }) => ({
+  topic: trigger?.topic ?? null,
+  shopId: record?.shopId ?? trigger?.shopId ?? null,
+  shopDomain: trigger?.shopDomain ?? null,
+  shopifyProductId: record?.productId == null ? null : String(record.productId),
+  shopifyProductGid: graphqlGid("Product", record?.productId),
+  shopifyVariantId: record?.id == null ? null : String(record.id),
+  shopifyVariantGid: graphqlGid("ProductVariant", record?.id),
+  produktnamn: null,
+  skuChange: {
+    oldSku,
+    newSku,
+  },
+});
+
+const variantSnapshotValue = (record, snapshot, field) => snapshot?.[field] ?? record?.[field] ?? null;
+
+export const enqueueShopifyProductVariantDeleteEasyCashierSync = async ({
+  api,
+  logger,
+  trigger,
+  record,
+  deletedVariant,
+}) => {
+  const sku = normalizeSkuValue(variantSnapshotValue(record, deletedVariant, "sku"));
+  const productId = variantSnapshotValue(record, deletedVariant, "productId");
+  const variantId = variantSnapshotValue(record, deletedVariant, "id");
+  const shopId = variantSnapshotValue(record, deletedVariant, "shopId") ?? trigger?.shopId ?? null;
+
+  if (!sku) {
+    logger.warn(
+      {
+        variantId,
+        productId,
+        shopId,
+      },
+      "Skipped EasyCashier variant delete because the Shopify variant SKU was missing"
+    );
+    return;
+  }
+
+  const payload = {
+    event: "deleted",
+    topic: trigger?.topic ?? null,
+    shopId,
+    shopDomain: trigger?.shopDomain ?? null,
+    shopifyProductId: productId == null ? null : String(productId),
+    shopifyProductGid: graphqlGid("Product", productId),
+    shopifyVariantId: variantId == null ? null : String(variantId),
+    shopifyVariantGid: graphqlGid("ProductVariant", variantId),
+    produktnamn: null,
+    products: [
+      {
+        shopifyProductId: productId == null ? null : String(productId),
+        shopifyVariantId: variantId == null ? null : String(variantId),
+        shopifyVariantGid: graphqlGid("ProductVariant", variantId),
+        artikelnummer: sku,
+      },
+    ],
+  };
+
+  await enqueueShopifyProductEasyCashierPayload({ api, logger, payload });
+
+  logger.info(
+    {
+      variantId,
+      productId,
+      sku,
+    },
+    "Queued EasyCashier variant delete sync"
+  );
+};
+
+const enqueueShopifyProductVariantSkuChangeEasyCashierSync = async ({
+  api,
+  logger,
+  trigger,
+  record,
+  previousSku,
+}) => {
+  const skuChanged = typeof record?.changed === "function" ? record.changed("sku") : previousSku !== undefined;
+  const oldSku = normalizeSkuValue(previousSku);
+  const newSku = normalizeSkuValue(record?.sku);
+
+  if (!skuChanged || oldSku === newSku) {
+    return false;
+  }
+
+  const basePayload = buildVariantSkuChangeBasePayload({
+    trigger,
+    record,
+    oldSku,
+    newSku,
+  });
+
+  if (newSku) {
+    if (!record?.productId) {
+      logger.warn(
+        {
+          variantId: record?.id ?? null,
+          newSku,
+          shopId: record?.shopId ?? trigger?.shopId ?? null,
+        },
+        "Skipped EasyCashier SKU change create because the Shopify product id was missing"
+      );
+    } else {
+      await enqueueShopifyProductEasyCashierPayload({
+        api,
+        logger,
+        payload: {
+          ...basePayload,
+          event: "updated",
+          products: [],
+        },
+      });
+    }
+  }
+
+  if (oldSku) {
+    await enqueueShopifyProductEasyCashierPayload({
+      api,
+      logger,
+      payload: {
+        ...basePayload,
+        event: "deleted",
+        products: [
+          {
+            shopifyProductId: basePayload.shopifyProductId,
+            shopifyVariantId: basePayload.shopifyVariantId,
+            shopifyVariantGid: basePayload.shopifyVariantGid,
+            artikelnummer: oldSku,
+          },
+        ],
+      },
+    });
+  }
+
+  logger.info(
+    {
+      variantId: record?.id ?? null,
+      productId: record?.productId ?? null,
+      oldSku,
+      newSku,
+    },
+    "Queued EasyCashier SKU change sync"
+  );
+
+  return true;
+};
+
+export const enqueueShopifyProductVariantInventoryEasyCashierSync = async ({
+  api,
+  logger,
+  trigger,
+  record,
+  previousSku,
+}) => {
+  const skuChangeQueued = await enqueueShopifyProductVariantSkuChangeEasyCashierSync({
+    api,
+    logger,
+    trigger,
+    record,
+    previousSku,
+  });
+
+  if (skuChangeQueued) {
+    return;
+  }
+
   const inventoryChanged =
     typeof record?.changed === "function" ? record.changed("inventoryQuantity") : record?.inventoryQuantity != null;
 

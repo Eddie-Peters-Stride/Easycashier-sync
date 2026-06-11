@@ -4,8 +4,13 @@ import { enqueueShopifyProductVariantInventoryEasyCashierSync } from "../../../l
 
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections }) => {
+  const previousSku = record.sku;
+
   applyParams(params, record);
+  record.__easyCashierPreviousSku = previousSku;
+
   await preventCrossShopDataAccess(params, record);
+  params.__easyCashierPreviousSku = previousSku;
   await save(record);
 };
 
@@ -16,6 +21,7 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     logger,
     trigger,
     record,
+    previousSku: params.__easyCashierPreviousSku ?? record.__easyCashierPreviousSku,
   });
 };
 
