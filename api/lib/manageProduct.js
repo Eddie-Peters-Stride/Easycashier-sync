@@ -5,6 +5,11 @@ const PRODUCT_WEBHOOK_EVENTS = {
 };
 
 const DEFAULT_VAT_RATE = 25;
+const EASYCASHIER_SYNC_QUEUE = {
+  name: "easycashier-sync",
+  maxConcurrency: 1,
+};
+const DEFAULT_SHOPIFY_LOCATION_PAGE_SIZE = 20;
 
 const configuredVatRate = () => {
   const rawRate = process.env.SHOPIFY_PRODUCT_DEFAULT_VAT_RATE;
@@ -46,6 +51,33 @@ const normalizeRawVariant = (variant) => ({
   inventoryQuantity: variant.inventory_quantity ?? variant.inventoryQuantity ?? null,
 });
 
+const availableQuantityFromInventoryLevel = (inventoryLevel) => {
+  const availableQuantity = inventoryLevel?.quantities?.find((quantity) => quantity?.name === "available")?.quantity;
+
+  if (availableQuantity == null || availableQuantity === "") {
+    return null;
+  }
+
+  const numericQuantity = Number(availableQuantity);
+
+  return Number.isFinite(numericQuantity) ? numericQuantity : availableQuantity;
+};
+
+const normalizeInventoryLevels = (inventoryLevels) => {
+  if (!Array.isArray(inventoryLevels)) {
+    return [];
+  }
+
+  return inventoryLevels
+    .map((inventoryLevel) => ({
+      locationId: idFromGid(inventoryLevel?.location?.id),
+      locationGid: inventoryLevel?.location?.id ?? null,
+      locationName: inventoryLevel?.location?.name ?? null,
+      available: availableQuantityFromInventoryLevel(inventoryLevel),
+    }))
+    .filter((inventoryLevel) => inventoryLevel.locationId != null || inventoryLevel.locationName != null);
+};
+
 const variantsFromWebhook = (trigger) => {
   const payload = rawWebhookPayload(trigger);
 
@@ -85,6 +117,7 @@ const buildRows = (variants, productName, shopifyProductId) => {
     ean: variant.barcode,
     moms: vatForTaxable(variant.taxable),
     inventoryQuantity: variant.inventoryQuantity,
+    inventoryByLocation: variant.inventoryByLocation,
   }));
 };
 
@@ -145,7 +178,9 @@ export const enqueueShopifyProductEasyCashierPayload = async ({ api, logger, pay
   }
 
   await api.enqueue(action, { payload }, {
-    queue: { name: "variant-bulk-updates", maxConcurrency: 5 },
+    // EasyCashier rate limiting is enforced in the sender, so all sync jobs
+    // must share a single queue to keep that guard global.
+    queue: EASYCASHIER_SYNC_QUEUE,
     retries: { retryCount: 2, initialInterval: 2000 },
   });
 
@@ -248,6 +283,7 @@ const normalizeShopifyVariantForInventory = (variant, inventoryQuantity) => ({
   barcode: variant?.barcode ?? null,
   taxable: variant?.taxable ?? null,
   inventoryQuantity: inventoryQuantity ?? variant?.inventoryQuantity ?? null,
+  inventoryByLocation: normalizeInventoryLevels(variant?.inventoryItem?.inventoryLevels?.nodes),
 });
 
 const buildInventoryWebhookPayload = ({ trigger, product, variant, inventoryQuantity }) => {
@@ -288,6 +324,20 @@ const fetchVariantForInventoryItem = async ({ connections, trigger, inventoryIte
           taxable
           price
           inventoryQuantity
+          inventoryItem {
+            inventoryLevels(first: ${DEFAULT_SHOPIFY_LOCATION_PAGE_SIZE}) {
+              nodes {
+                location {
+                  id
+                  name
+                }
+                quantities(names: ["available"]) {
+                  name
+                  quantity
+                }
+              }
+            }
+          }
           product {
             id
             legacyResourceId

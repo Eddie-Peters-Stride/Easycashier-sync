@@ -23,7 +23,7 @@ topics = [ "collections/create", "collections/update", "collections/delete", "sh
 # Trigger key: shopifyproduct-create
 [[webhooks.subscriptions]]
 uri = "https://webhooks.gadget-services.net/shopify/v1/shopifyproduct-create?domain=easycashier-sync.gadget.app"
-topics = [ "products/create", "products/update" ]
+topics = [ "products/create" ]
 
 # Trigger key: shopifyproduct-delete
 [[webhooks.subscriptions]]
