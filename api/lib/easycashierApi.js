@@ -414,7 +414,7 @@ const productRowsForRequest = async ({ endpointName, payload, connections }) => 
   const payloadRows = productRowsFromPayload(payload);
   const payloadRowsIncludeLocationInventory =
     payloadRows.length > 0 &&
-    payloadRows.every((product) => Object.prototype.hasOwnProperty.call(product ?? {}, "inventoryByLocation"));
+    payloadRows.every((product) => Array.isArray(product?.inventoryByLocation));
 
   if (payloadRowsIncludeLocationInventory) {
     return payloadRows;
@@ -567,9 +567,27 @@ const buildStockEntries = (product) => {
   ];
 };
 
+const stockQuantityFromEntries = (stockEntries, fallbackQuantity) => {
+  let hasQuantity = false;
+  const quantityField = configuredStockEntryQuantityField();
+  const totalQuantity = stockEntries.reduce((total, stockEntry) => {
+    const quantity = optionalNumberFromValue(stockEntry?.[quantityField]);
+
+    if (quantity == null || !Number.isFinite(Number(quantity))) {
+      return total;
+    }
+
+    hasQuantity = true;
+    return total + Number(quantity);
+  }, 0);
+
+  return hasQuantity ? totalQuantity : fallbackQuantity;
+};
+
 const buildEasyCashierArticlePayload = (product) => {
   const inventoryQuantity = inventoryQuantityFromProduct(product);
   const stockEntries = buildStockEntries(product);
+  const stockQuantity = stockQuantityFromEntries(stockEntries, inventoryQuantity);
 
   return {
     articleNumber: articleNumberFromProduct(product),
@@ -584,6 +602,7 @@ const buildEasyCashierArticlePayload = (product) => {
     askForQuantity: false,
     addTextWhenSold: false,
     stockItem: inventoryQuantity != null || stockEntries.length > 0,
+    stockQuantity,
     storageArea: null,
     supplierArticleNumber: "",
     articleGroupId: null,
