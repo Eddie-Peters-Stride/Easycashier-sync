@@ -183,9 +183,11 @@ const normalizeEasyCashierStockLocationMapping = (mapping) => {
   };
 };
 
+
+//When more locations needs to be supported, add them to the EASYCASHIER_STOCK_LOCATION_MAPPINGS environment variable as a JSON array of objects with easyCashierStoreNumber and shopifyLocationName or shopifyLocationId properties, e.g.:
+// EASYCASHIER_STOCK_LOCATION_MAPPINGS='[{"easyCashierStoreNumber": 1, "shopifyLocationName": "Kungsholmstorg 8"}, {"easyCashierStoreNumber": 2, "shopifyLocationId": "gid://shopify/Location/123456789"}]'
 const EASYCASHIER_STOCK_LOCATION_MAPPINGS = [
   { easyCashierStoreNumber: 1, shopifyLocationName: "Kungsholmstorg 8" },
-  { easyCashierStoreNumber: 3, shopifyLocationName: "Sveav\u00e4gen 118" },
 ].map(normalizeEasyCashierStockLocationMapping);
 
 const availableQuantityFromInventoryLevel = (inventoryLevel) => {
