@@ -578,16 +578,6 @@ const configuredOptionalString = (envVarName) => {
   return value == null || value === "" ? null : value;
 };
 
-const configuredBoolean = (envVarName, defaultValue) => {
-  const value = process.env[envVarName];
-
-  if (value == null || value === "") {
-    return defaultValue;
-  }
-
-  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
-};
-
 const applyTemplateString = (template, context) =>
   String(template).replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key) => {
     const value = context[key];
@@ -1022,6 +1012,11 @@ const desiredStockLevelsForProduct = (product) => {
 
 const stockQuantityChanged = (delta) => Math.abs(delta) > STOCK_QUANTITY_CHANGE_TOLERANCE;
 
+const STOCK_CHANGE_TYPES = {
+  increase: "increase",
+  decrease: "decrease",
+};
+
 const resolveEasyCashierEndpoint = ({ articleEndpoint, endpointTemplate, context }) => {
   const resolvedEndpoint = resolveEndpoint(applyTemplateString(endpointTemplate, context));
 
@@ -1034,141 +1029,30 @@ const resolveEasyCashierEndpoint = ({ articleEndpoint, endpointTemplate, context
   return `${articleRootEndpoint}/${resolvedEndpoint.replace(/^\/+/, "")}`.replace(/([^:])\/{2,}/g, "$1/");
 };
 
-const stockImportEndpoint = () =>
-  configuredOptionalString("EASYCASHIER_STOCK_IMPORT_ENDPOINT") ?? "/import/ongoingStockTaking";
+const stockChangeTypeForDelta = (delta) => (delta > 0 ? STOCK_CHANGE_TYPES.increase : STOCK_CHANGE_TYPES.decrease);
 
-const stockImportFileFieldName = () => configuredString("EASYCASHIER_STOCK_IMPORT_FILE_FIELD", "file");
+const stockChangeEndpoint = (changeType) =>
+  configuredOptionalString(
+    changeType === STOCK_CHANGE_TYPES.increase
+      ? "EASYCASHIER_STOCK_INCREASE_ENDPOINT"
+      : "EASYCASHIER_STOCK_DECREASE_ENDPOINT"
+  ) ?? (changeType === STOCK_CHANGE_TYPES.increase ? "/stock/increaseStock" : "/stock/decreaseStock");
 
-const stockImportFileName = () => configuredString("EASYCASHIER_STOCK_IMPORT_FILE_NAME", "easycashier-inventory.csv");
+const stockChangeComment = () => {
+  const comment = configuredOptionalString("EASYCASHIER_STOCK_CHANGE_COMMENT");
 
-const stockImportCsvDelimiter = () => configuredString("EASYCASHIER_STOCK_IMPORT_CSV_DELIMITER", ";");
-
-const stockImportCsvHeaders = () => {
-  const configuredHeaders = configuredOptionalString("EASYCASHIER_STOCK_IMPORT_CSV_HEADERS");
-
-  if (!configuredHeaders) {
-    return ["Artikelnummer", "Antal"];
-  }
-
-  const parsedHeaders = parseJsonText(configuredHeaders);
-
-  if (Array.isArray(parsedHeaders)) {
-    return parsedHeaders.map((header) => String(header));
-  }
-
-  return configuredHeaders.split(stockImportCsvDelimiter()).map((header) => header.trim());
+  return comment == null ? null : comment;
 };
 
-const stockImportCsvRowTemplate = () => {
-  const configuredTemplate = configuredOptionalString("EASYCASHIER_STOCK_IMPORT_CSV_ROW_TEMPLATE");
-
-  if (!configuredTemplate) {
-    return ["{{articleNumber}}", "{{desiredQuantity}}"];
-  }
-
-  const parsedTemplate = parseJsonText(configuredTemplate);
-
-  if (!Array.isArray(parsedTemplate)) {
-    throw new Error("EASYCASHIER_STOCK_IMPORT_CSV_ROW_TEMPLATE must be a JSON array");
-  }
-
-  return parsedTemplate;
-};
-
-const csvCell = (value, delimiter) => {
-  if (value == null) {
-    return "";
-  }
-
-  const text = String(value);
-  const shouldQuote = text.includes(delimiter) || text.includes("\"") || text.includes("\n") || text.includes("\r");
-
-  if (!shouldQuote) {
-    return text;
-  }
-
-  return `"${text.replace(/"/g, "\"\"")}"`;
-};
-
-const stockImportRowContext = ({ product, movement }) => ({
-  articleNumber: movement.articleNumber,
-  storeNumber: movement.storeNumber,
-  quantity: movement.desiredQuantity,
-  desiredQuantity: movement.desiredQuantity,
-  currentQuantity: movement.currentQuantity,
-  delta: movement.delta,
-  shopifyProductId: product?.shopifyProductId ?? null,
-  shopifyVariantId: product?.shopifyVariantId ?? null,
-  webshopArticleId: product?.shopifyProductId == null ? null : String(product.shopifyProductId),
+const stockChangeEndpointContext = ({ group }) => ({
+  easycashier_company_id: process.env.EASYCASHIER_COMPANY_ID ?? null,
+  easyCashierCompanyId: process.env.EASYCASHIER_COMPANY_ID ?? null,
+  companyId: process.env.EASYCASHIER_COMPANY_ID ?? null,
+  storeNumber: group.storeNumber,
+  changeType: group.changeType,
 });
 
-const buildStockTakingImportCsv = ({ product, movements }) => {
-  const delimiter = stockImportCsvDelimiter();
-  const rowTemplate = stockImportCsvRowTemplate();
-  const rows = [
-    stockImportCsvHeaders(),
-    ...movements.map((movement) => {
-      const context = stockImportRowContext({ product, movement });
-
-      return rowTemplate.map((value) => applyTemplateValue(value, context));
-    }),
-  ];
-
-  return rows.map((row) => row.map((cell) => csvCell(cell, delimiter)).join(delimiter)).join("\r\n");
-};
-
-const configuredStockTakingId = () => configuredOptionalString("EASYCASHIER_STOCK_TAKING_ID");
-
-const stockTakingIdFromUploadResponse = (json) => {
-  const candidates = [
-    configuredStockTakingId(),
-    json?.stockTakingId,
-    json?.stock_taking_id,
-    json?.ongoingStockTakingId,
-    json?.ongoing_stock_taking_id,
-    json?.stockTaking?.id,
-    json?.ongoingStockTaking?.id,
-    json?.result?.stockTakingId,
-    json?.result?.ongoingStockTakingId,
-  ];
-
-  return candidates.find((candidate) => candidate != null && candidate !== "") ?? null;
-};
-
-const shouldCompleteStockTakingImport = () =>
-  configuredBoolean("EASYCASHIER_STOCK_TAKING_AUTO_COMPLETE", true);
-
-const stockTakingCompleteEndpoint = () =>
-  configuredOptionalString("EASYCASHIER_STOCK_TAKING_COMPLETE_ENDPOINT") ??
-  "/stockTaking/ongoing/{{stockTakingId}}/complete";
-
-const buildStockTakingCompletePayload = ({ stockTakingId }) => {
-  const payloadTemplate = configuredOptionalString("EASYCASHIER_STOCK_TAKING_COMPLETE_PAYLOAD_TEMPLATE");
-  const context = {
-    stockTakingId,
-    resetRemainingStockToZero: configuredBoolean("EASYCASHIER_STOCK_TAKING_RESET_REMAINING_STOCK_TO_ZERO", false),
-    articleGroupId: configuredOptionalString("EASYCASHIER_STOCK_TAKING_ARTICLE_GROUP_ID"),
-    supplierNumber: configuredOptionalString("EASYCASHIER_STOCK_TAKING_SUPPLIER_NUMBER"),
-  };
-
-  if (payloadTemplate) {
-    const parsedTemplate = parseJsonText(payloadTemplate);
-
-    if (!parsedTemplate || typeof parsedTemplate !== "object" || Array.isArray(parsedTemplate)) {
-      throw new Error("EASYCASHIER_STOCK_TAKING_COMPLETE_PAYLOAD_TEMPLATE must be a JSON object");
-    }
-
-    return applyTemplateValue(parsedTemplate, context);
-  }
-
-  return {
-    resetRemainingStockToZero: context.resetRemainingStockToZero,
-    articleGroupId: context.articleGroupId,
-    supplierNumber: context.supplierNumber,
-  };
-};
-
-const buildStockImportMovements = ({ product, article }) => {
+const buildStockChangeMovements = ({ product, article }) => {
   const desiredStockLevels = desiredStockLevelsForProduct(product);
   const allowArticleStockQuantity = desiredStockLevels.length === 1;
   const requestArticleNumber = articleNumberFromProduct(product);
@@ -1191,6 +1075,7 @@ const buildStockImportMovements = ({ product, article }) => {
 
       return {
         articleNumber: requestArticleNumber,
+        changeType: stockChangeTypeForDelta(delta),
         storeNumber: stockLevel.storeNumber,
         currentQuantity: Number(currentQuantity),
         desiredQuantity: stockLevel.desiredQuantity,
@@ -1201,84 +1086,60 @@ const buildStockImportMovements = ({ product, article }) => {
     .filter((movement) => stockQuantityChanged(movement.delta));
 };
 
-const completeStockTakingImport = async ({ articleEndpoint, uploadJson, requestDetails }) => {
-  if (!shouldCompleteStockTakingImport()) {
-    requestDetails.stockTakingCompleteSkipped = true;
-    return;
+const stockChangeRequestKey = (movement) => `${movement.changeType}:${movement.storeNumber}`;
+
+const buildStockChangeRequestGroups = (movements) => {
+  const groups = new Map();
+
+  for (const movement of movements) {
+    const key = stockChangeRequestKey(movement);
+    const group = groups.get(key) ?? {
+      changeType: movement.changeType,
+      storeNumber: movement.storeNumber,
+      movements: [],
+    };
+
+    group.movements.push(movement);
+    groups.set(key, group);
   }
 
-  const stockTakingId = stockTakingIdFromUploadResponse(uploadJson);
-  const endpointTemplate = stockTakingCompleteEndpoint();
-  const endpointNeedsStockTakingId = /\{\{\s*stockTakingId\s*\}\}/.test(endpointTemplate);
+  return [...groups.values()];
+};
 
-  if (!stockTakingId && endpointNeedsStockTakingId) {
-    requestDetails.stockTakingCompleteSkipped = true;
-    requestDetails.stockTakingCompleteSkippedReason =
-      "No stock taking id was returned by EasyCashier. Set EASYCASHIER_STOCK_TAKING_ID or EASYCASHIER_STOCK_TAKING_COMPLETE_ENDPOINT if this id is fixed.";
-    return;
-  }
+const buildStockChangePayload = ({ group }) => ({
+  storeNumber: group.storeNumber,
+  articles: group.movements.map((movement) => ({
+    articleNumber: movement.articleNumber,
+    quantity: movement.quantity,
+    costPriceExcludingVat: configuredNumber("EASYCASHIER_DEFAULT_COST_PRICE_EXCLUDING_VAT", 0),
+  })),
+  comment: stockChangeComment(),
+});
 
-  const context = { stockTakingId };
+const sendStockChangeRequest = async ({ articleEndpoint, group, product, syncDetails }) => {
   const endpoint = resolveEasyCashierEndpoint({
     articleEndpoint,
-    endpointTemplate,
-    context,
+    endpointTemplate: stockChangeEndpoint(group.changeType),
+    context: stockChangeEndpointContext({ group }),
   });
-  const payload = buildStockTakingCompletePayload({ stockTakingId });
-  const completeDetails = {
-    requestedEndpointName: "stock-taking-complete",
-    endpointName: "stock-taking-complete",
+  const payload = buildStockChangePayload({ group });
+  const requestDetails = {
+    requestedEndpointName: "stock-change",
+    endpointName: `stock-${group.changeType}`,
     method: "POST",
     endpoint,
-    stockTakingId,
+    sourceProduct: productDetailsForLog(product),
+    stockChange: {
+      type: group.changeType,
+      storeNumber: group.storeNumber,
+      movements: group.movements,
+    },
     easycashierPayload: payload,
   };
   const response = await fetchEasyCashier(endpoint, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(payload),
-  });
-  const responseBody = await response.text();
-  completeDetails.responseStatus = response.status;
-  completeDetails.responseBody = textForLog(responseBody);
-  requestDetails.stockTakingComplete = completeDetails;
-
-  if (!response.ok) {
-    throw new Error(`EasyCashier stock taking complete API request failed with status ${response.status}`);
-  }
-};
-
-const sendStockTakingImport = async ({ articleEndpoint, movements, product, syncDetails }) => {
-  const endpoint = resolveEasyCashierEndpoint({
-    articleEndpoint,
-    endpointTemplate: stockImportEndpoint(),
-    context: {},
-  });
-  const csv = buildStockTakingImportCsv({ product, movements });
-  const formData = new FormData();
-  formData.append(
-    stockImportFileFieldName(),
-    new Blob([csv], { type: configuredString("EASYCASHIER_STOCK_IMPORT_FILE_CONTENT_TYPE", "text/csv") }),
-    stockImportFileName()
-  );
-
-  const requestDetails = {
-    requestedEndpointName: "stock-taking-import",
-    endpointName: "stock-taking-import",
-    method: "POST",
-    endpoint,
-    sourceProduct: productDetailsForLog(product),
-    stockImport: {
-      filename: stockImportFileName(),
-      rowCount: movements.length,
-      csvPreview: textForLog(csv, 1000),
-      movements,
-    },
-  };
-  const response = await fetchEasyCashier(endpoint, {
-    method: "POST",
-    headers: authHeaders({ contentType: null }),
-    body: formData,
   });
   const responseBody = await parseJsonResponse(response);
   requestDetails.responseStatus = response.status;
@@ -1287,14 +1148,19 @@ const sendStockTakingImport = async ({ articleEndpoint, movements, product, sync
   syncDetails.requests.push(requestDetails);
 
   if (!response.ok) {
-    throw new Error(`EasyCashier stock taking import API request failed with status ${response.status}`);
+    throw new Error(`EasyCashier stock ${group.changeType} API request failed with status ${response.status}`);
   }
+};
 
-  await completeStockTakingImport({
-    articleEndpoint,
-    uploadJson: responseBody.json,
-    requestDetails,
-  });
+const sendStockChanges = async ({ articleEndpoint, movements, product, syncDetails }) => {
+  for (const group of buildStockChangeRequestGroups(movements)) {
+    await sendStockChangeRequest({
+      articleEndpoint,
+      group,
+      product,
+      syncDetails,
+    });
+  }
 };
 
 const syncEasyCashierInventory = async ({ articleEndpoint, product, responseBody, syncDetails, logger }) => {
@@ -1318,13 +1184,13 @@ const syncEasyCashierInventory = async ({ articleEndpoint, product, responseBody
     });
   }
 
-  const movements = buildStockImportMovements({ product, article: easyCashierArticle });
+  const movements = buildStockChangeMovements({ product, article: easyCashierArticle });
 
   if (movements.length === 0) {
     return 0;
   }
 
-  await sendStockTakingImport({
+  await sendStockChanges({
     articleEndpoint,
     movements,
     product,
