@@ -15,6 +15,7 @@ export const run = async ({ logger, api, connections, trigger }) => {
 
 /** @type { ActionOptions } */
 export const options = {
+  timeoutMS: 900000,
   triggers: {
     api: true,
     shopify: {

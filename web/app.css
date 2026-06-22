@@ -98,7 +98,8 @@
 .sync-progress-bar-fill {
   height: 100%;
   border-radius: inherit;
-  transition: width 180ms ease;
+  transition: width 220ms linear;
+  will-change: width;
 }
 
 .sync-progress-bar-fill-preparing {
@@ -244,6 +245,12 @@
   justify-items: start;
 }
 
+.sync-all-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .sync-all-button {
   min-height: 42px;
   padding: 0 18px;
@@ -262,6 +269,18 @@
   transform: translateY(-1px);
 }
 
+.sync-all-button-secondary {
+  border-color: #e2b8b5;
+  background: #fff4f2;
+  color: #b42318;
+  box-shadow: none;
+}
+
+.sync-all-button-secondary:hover:not(:disabled) {
+  border-color: #d48f8a;
+  background: #ffeceb;
+}
+
 .sync-all-button:disabled {
   border-color: #c6d4ca;
   background: #d9e7dd;
@@ -269,6 +288,12 @@
   box-shadow: none;
   cursor: not-allowed;
   transform: none;
+}
+
+.sync-all-button-secondary:disabled {
+  border-color: #e6d4d0;
+  background: #fff7f6;
+  color: #c08c86;
 }
 
 .sync-all-status {
@@ -349,6 +374,10 @@
   color: #b42318;
 }
 
+.sync-log-status-cancelled {
+  color: #b45309;
+}
+
 .sync-log-detail-cell {
   background: #f6f6f7;
   white-space: normal;
@@ -419,6 +448,11 @@
 
   .sync-all-button {
     width: 100%;
+  }
+
+  .sync-all-action-buttons {
+    width: 100%;
+    flex-direction: column;
   }
 }
 

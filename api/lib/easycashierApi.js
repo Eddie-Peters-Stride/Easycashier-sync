@@ -14,9 +14,15 @@ const authHeaders = ({ contentType = "application/json" } = {}) => {
 
 const ARTICLE_NOT_FOUND_CODE = "EASYCASHIER_ARTICLE_NOT_FOUND";
 const DEFAULT_EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE = 300;
-const DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE = 250;
+const DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_COUNT = 3;
+const DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_BASE_MS = 2000;
+const DEFAULT_EASYCASHIER_ARTICLE_ID_CACHE_TTL_MS = 30 * 60 * 1000;
+const MAX_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE = 500;
+const DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE = MAX_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE;
 const DEFAULT_SHOPIFY_LOCATION_PAGE_SIZE = 20;
 const STOCK_QUANTITY_CHANGE_TOLERANCE = 0.000001;
+const DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_QUERY_FIELDS = ["articleNumber", "artikelnummer", "sku", "q", "search"];
+const easyCashierArticleIdCache = new Map();
 
 const textForLog = (value, maxLength = 2000) => {
   if (value == null) {
@@ -36,7 +42,7 @@ const errorMessageForLog = (error) => error?.message ?? String(error);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const configuredEasyCashierRequestsPerMinute = () => {
+export const configuredEasyCashierRequestsPerMinute = () => {
   const rawValue = process.env.EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE;
   const parsedValue =
     rawValue == null ? DEFAULT_EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE : Number.parseInt(rawValue, 10);
@@ -45,60 +51,75 @@ const configuredEasyCashierRequestsPerMinute = () => {
     return DEFAULT_EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE;
   }
 
-  return parsedValue;
+  return Math.min(parsedValue, DEFAULT_EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE);
+};
+
+const configuredEasyCashierRateLimitRetryCount = () => {
+  const rawValue = process.env.EASYCASHIER_RATE_LIMIT_RETRY_COUNT;
+  const parsedValue =
+    rawValue == null ? DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_COUNT : Number.parseInt(rawValue, 10);
+
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_COUNT;
+};
+
+const configuredEasyCashierRateLimitRetryBaseMs = () => {
+  const rawValue = process.env.EASYCASHIER_RATE_LIMIT_RETRY_BASE_MS;
+  const parsedValue =
+    rawValue == null ? DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_BASE_MS : Number.parseInt(rawValue, 10);
+
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_BASE_MS;
+};
+
+const configuredEasyCashierArticleIdCacheTtlMs = () => {
+  const rawValue = process.env.EASYCASHIER_ARTICLE_ID_CACHE_TTL_MS;
+  const parsedValue =
+    rawValue == null ? DEFAULT_EASYCASHIER_ARTICLE_ID_CACHE_TTL_MS : Number.parseInt(rawValue, 10);
+
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : DEFAULT_EASYCASHIER_ARTICLE_ID_CACHE_TTL_MS;
 };
 
 const easyCashierRequestIntervalMs = () =>
   Math.ceil(60000 / configuredEasyCashierRequestsPerMinute());
 
+const retryAfterDelayMs = (response, attemptNumber) => {
+  const retryAfterHeader = response.headers.get("retry-after");
+
+  if (retryAfterHeader) {
+    const retryAfterSeconds = Number.parseFloat(retryAfterHeader);
+
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+      return Math.ceil(retryAfterSeconds * 1000);
+    }
+
+    const retryAfterDateMs = Date.parse(retryAfterHeader);
+
+    if (Number.isFinite(retryAfterDateMs)) {
+      const delayMs = retryAfterDateMs - Date.now();
+
+      if (delayMs > 0) {
+        return delayMs;
+      }
+    }
+  }
+
+  return configuredEasyCashierRateLimitRetryBaseMs() * Math.max(1, 2 ** (attemptNumber - 1));
+};
+
 const fetchEasyCashier = async (url, options) => {
-  // These background actions run in a single dedicated queue, so pausing
-  // before each request keeps the whole EasyCashier sync stream below the
-  // 300 requests/minute cap.
-  await sleep(easyCashierRequestIntervalMs());
+  const maxRetryCount = configuredEasyCashierRateLimitRetryCount();
 
-  return await fetch(url, options);
-};
+  for (let attemptNumber = 0; ; attemptNumber += 1) {
+    // Pausing before each request smooths out bursts, but concurrent queues
+    // can still overlap, so we also retry 429s below.
+    await sleep(easyCashierRequestIntervalMs());
 
-const createProductSyncLog = async ({
-  api,
-  payload,
-  status,
-  details = null,
-  errorMessage = null,
-  easycashierArticleNumber = null,
-}) => {
-  await api.internal.easycashierProductSyncLog.create({
-    event: payload?.event ?? null,
-    shopId: payload?.shopId ?? null,
-    shopifyProductId: payload?.shopifyProductId ?? null,
-    status,
-    details,
-    errorMessage,
-    easycashierArticleNumber,
-  });
-};
+    const response = await fetch(url, options);
 
-const recordProductSyncFailure = async ({ api, payload, logger, error, details, easycashierArticleNumber }) => {
-  try {
-    await createProductSyncLog({
-      api,
-      payload,
-      status: "failed",
-      details,
-      errorMessage: errorMessageForLog(error),
-      easycashierArticleNumber,
-    });
-  } catch (logError) {
-    logger.error(
-      {
-        error: logError,
-        originalError: error,
-        event: payload?.event,
-        productId: payload?.shopifyProductId,
-      },
-      "Failed to record EasyCashier product sync failure"
-    );
+    if (response.status !== 429 || attemptNumber >= maxRetryCount) {
+      return response;
+    }
+
+    await sleep(retryAfterDelayMs(response, attemptNumber + 1));
   }
 };
 
@@ -279,6 +300,12 @@ const productRowsFromPayload = (payload) => {
   return payload.products;
 };
 
+const optionalVariantIdentifierFromProduct = (product) => {
+  const variantIdentifier = product?.shopifyVariantId ?? idFromGid(product?.shopifyVariantGid);
+
+  return variantIdentifier == null || variantIdentifier === "" ? null : String(variantIdentifier);
+};
+
 const variantLookupValuesFromPayload = (payload) => {
   const values = [
     payload?.shopifyVariantId,
@@ -315,9 +342,12 @@ const deleteProductRowFromPayload = (payload) => {
   const sku =
     firstProductRow?.artikelnummer ??
     firstProductRow?.sku ??
+    firstProductRow?.articleNumber ??
+    optionalVariantIdentifierFromProduct(firstProductRow) ??
     payload?.artikelnummer ??
     payload?.sku ??
     payload?.articleNumber ??
+    optionalVariantIdentifierFromProduct(payload) ??
     null;
 
   if (!sku) {
@@ -484,10 +514,22 @@ const productRowsForRequest = async ({ endpointName, payload, connections }) => 
 };
 
 const optionalArticleNumberFromProduct = (product) => {
-  const articleNumber = product?.artikelnummer ?? product?.sku ?? product?.articleNumber;
+  const articleNumber =
+    product?.artikelnummer ??
+    product?.sku ??
+    product?.articleNumber ??
+    optionalVariantIdentifierFromProduct(product);
 
   return articleNumber == null || articleNumber === "" ? null : String(articleNumber);
 };
+
+const optionalShopifySkuFromProduct = (product) => {
+  const sku = product?.artikelnummer ?? product?.sku;
+
+  return sku == null || sku === "" ? null : String(sku);
+};
+
+const isMissingShopifySkuProduct = (product) => optionalShopifySkuFromProduct(product) == null;
 
 const articleNumberFromProduct = (product) => {
   const articleNumber = optionalArticleNumberFromProduct(product);
@@ -522,7 +564,7 @@ const productDetailsForLog = (product) => ({
   shopifyProductId: product?.shopifyProductId ?? null,
   shopifyVariantId: product?.shopifyVariantId ?? null,
   articleNumber: optionalArticleNumberFromProduct(product),
-  sku: product?.artikelnummer ?? product?.sku ?? null,
+  sku: optionalShopifySkuFromProduct(product),
   name: product?.produktnamn ?? product?.title ?? product?.description ?? null,
   price: product?.pris ?? product?.price ?? null,
   ean: product?.ean ?? product?.barcode ?? null,
@@ -570,6 +612,24 @@ const configuredOptionalString = (envVarName) => {
 
   return value == null || value === "" ? null : value;
 };
+
+const configuredStringList = (envVarName, defaultValue) => {
+  const value = configuredOptionalString(envVarName);
+
+  if (!value) {
+    return defaultValue;
+  }
+
+  const parsedValue = parseJsonText(value);
+  const list = Array.isArray(parsedValue) ? parsedValue : value.split(",");
+
+  return list
+    .map((item) => String(item).trim())
+    .filter((item) => item !== "");
+};
+
+const configuredArticleLookupQueryFields = () =>
+  configuredStringList("EASYCASHIER_ARTICLE_LOOKUP_QUERY_FIELDS", DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_QUERY_FIELDS);
 
 const applyTemplateString = (template, context) =>
   String(template).replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key) => {
@@ -758,10 +818,116 @@ const articleNumber = (article) =>
   article?.articleNumber ??
   article?.article_number ??
   article?.artikelnummer ??
+  article?.articleNo ??
+  article?.article_no ??
+  article?.articleNr ??
+  article?.article_nr ??
+  article?.number ??
   article?.sku ??
   article?.SKU;
 
-const articleId = (article) => article?.id ?? article?.articleId ?? article?.article_id ?? article?.uuid;
+const articleId = (article) =>
+  article?.id ?? article?.articleId ?? article?.article_id ?? article?.articleUuid ?? article?.article_uuid ?? article?.uuid;
+
+const webshopArticleIdFromArticle = (article) =>
+  article?.webshopArticleId ?? article?.webshop_article_id ?? article?.webshopId ?? article?.webshop_id;
+
+const easyCashierArticleIdCacheKey = ({ articleEndpoint, fieldName, fieldValue }) =>
+  `${articleEndpoint}|${fieldName}|${String(fieldValue).trim()}`;
+
+const easyCashierArticleIdCacheEntry = (cacheKey) => {
+  const entry = easyCashierArticleIdCache.get(cacheKey);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    easyCashierArticleIdCache.delete(cacheKey);
+    return null;
+  }
+
+  return entry;
+};
+
+const cachedEasyCashierArticleId = ({ articleEndpoint, product }) => {
+  const lookupValues = [];
+  const articleNumber = optionalArticleNumberFromProduct(product);
+
+  if (articleNumber) {
+    lookupValues.push({
+      fieldName: "articleNumber",
+      fieldValue: articleNumber,
+    });
+  }
+
+  if (product?.shopifyProductId != null && product.shopifyProductId !== "") {
+    lookupValues.push({
+      fieldName: "webshopArticleId",
+      fieldValue: String(product.shopifyProductId),
+    });
+  }
+
+  for (const lookupValue of lookupValues) {
+    const entry = easyCashierArticleIdCacheEntry(
+      easyCashierArticleIdCacheKey({
+        articleEndpoint,
+        ...lookupValue,
+      })
+    );
+
+    if (entry?.easyCashierArticleId) {
+      return entry.easyCashierArticleId;
+    }
+  }
+
+  return null;
+};
+
+const cacheEasyCashierArticleId = ({ articleEndpoint, product, article }) => {
+  const easyCashierArticleId = articleId(article);
+
+  if (!easyCashierArticleId) {
+    return;
+  }
+
+  const cacheValues = [
+    optionalArticleNumberFromProduct(product),
+    articleNumber(article),
+  ]
+    .filter((value) => value != null && value !== "")
+    .map((value) => ({
+      fieldName: "articleNumber",
+      fieldValue: String(value),
+    }));
+
+  const webshopArticleId =
+    product?.shopifyProductId != null && product.shopifyProductId !== ""
+      ? String(product.shopifyProductId)
+      : webshopArticleIdFromArticle(article);
+
+  if (webshopArticleId != null && webshopArticleId !== "") {
+    cacheValues.push({
+      fieldName: "webshopArticleId",
+      fieldValue: String(webshopArticleId),
+    });
+  }
+
+  const expiresAt = Date.now() + configuredEasyCashierArticleIdCacheTtlMs();
+
+  for (const cacheValue of cacheValues) {
+    easyCashierArticleIdCache.set(
+      easyCashierArticleIdCacheKey({
+        articleEndpoint,
+        ...cacheValue,
+      }),
+      {
+        easyCashierArticleId: String(easyCashierArticleId),
+        expiresAt,
+      }
+    );
+  }
+};
 
 const articleLookupValues = (article) =>
   [
@@ -770,11 +936,10 @@ const articleLookupValues = (article) =>
     .filter((value) => value != null && value !== "")
     .map((value) => String(value).trim());
 
-const findArticlesForArticleNumbers = ({ json, articleNumbers }) => {
+const findArticlesForArticleNumbers = ({ json, articleNumbers, assumeFilteredByArticleNumber = false }) => {
   const records = articleRecordsFromResponse(json);
   const lookupArticleNumbers = articleNumbers.map((articleNumber) => String(articleNumber).trim());
-
-  return records
+  const matchingRecords = records
     .map((article, responseIndex) => {
       const easyCashierLookupValues = articleLookupValues(article);
       const lookupIndex = easyCashierLookupValues.reduce((bestIndex, easyCashierLookupValue) => {
@@ -792,43 +957,180 @@ const findArticlesForArticleNumbers = ({ json, articleNumbers }) => {
     .filter(({ lookupIndex }) => lookupIndex !== Number.POSITIVE_INFINITY)
     .sort((a, b) => a.lookupIndex - b.lookupIndex || a.responseIndex - b.responseIndex)
     .map(({ article }) => article);
+
+  if (matchingRecords.length > 0) {
+    return matchingRecords;
+  }
+
+  if (assumeFilteredByArticleNumber && records.length === 1 && articleId(records[0]) != null) {
+    return records;
+  }
+
+  return [];
 };
 
-const articleLookupPagination = (json) => {
+const broadArticleLookupQueryFields = new Set(["q", "query", "search"]);
+
+const articleLookupCandidates = ({ articleEndpoint, articleNumbers, includeQueryLookups }) => {
+  const candidates = [];
+
+  if (includeQueryLookups) {
+    for (const requestArticleNumber of articleNumbers) {
+      for (const queryField of configuredArticleLookupQueryFields()) {
+        candidates.push({
+          lookupEndpoint: endpointWithQueryParams(articleEndpoint, {
+            [queryField]: requestArticleNumber,
+          }),
+          assumeFilteredByArticleNumber: !broadArticleLookupQueryFields.has(queryField),
+          optional: true,
+        });
+      }
+    }
+  }
+
+  candidates.push({
+    lookupEndpoint: pagedArticleListLookupEndpoint(articleEndpoint),
+    assumeFilteredByArticleNumber: false,
+    optional: false,
+  });
+
+  return candidates;
+};
+
+const articleLookupDebugContext = ({ articleEndpoint, product, includeQueryLookups }) => {
+  const articleNumbers = articleNumbersForLookup(product);
+
+  return {
+    articleEndpoint,
+    articleNumbers,
+    lookupQueryFields: configuredArticleLookupQueryFields(),
+    includeQueryLookups,
+    lookupCandidates: articleLookupCandidates({
+      articleEndpoint,
+      articleNumbers,
+      includeQueryLookups,
+    }).map(({ lookupEndpoint, assumeFilteredByArticleNumber, optional }) => ({
+      lookupEndpoint,
+      assumeFilteredByArticleNumber,
+      optional,
+    })),
+  };
+};
+
+const numericQueryParamFromEndpoint = (lookupEndpoint, parameterNames) => {
+  if (!lookupEndpoint) {
+    return null;
+  }
+
+  try {
+    const url = new URL(lookupEndpoint);
+
+    for (const parameterName of parameterNames) {
+      const value = url.searchParams.get(parameterName);
+
+      if (Number.isFinite(Number(value))) {
+        return Number(value);
+      }
+    }
+  } catch (_) {
+    return null;
+  }
+
+  return null;
+};
+
+const normalizedArticleLookupPageSize = (value, fallbackValue = DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE) => {
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return fallbackValue;
+  }
+
+  return Math.min(Math.trunc(parsedValue), MAX_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE);
+};
+
+const pagedArticleListLookupEndpoint = (
+  articleEndpoint,
+  pageNumber = 1,
+  itemsPerPage = DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE
+) =>
+  endpointWithQueryParams(articleEndpoint, {
+    itemsPerPage: normalizedArticleLookupPageSize(itemsPerPage),
+    pageNumber,
+    sortColumn: "articleNumber",
+    sortDirection: "asc",
+  });
+
+const articleLookupPagination = (json, lookupEndpoint) => {
   if (!json || typeof json !== "object") {
     return null;
   }
 
-  const pageSize = Number.isFinite(Number(json.size)) && Number(json.size) > 0
-    ? Number(json.size)
-    : DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE;
-  const currentPage = Number.isFinite(Number(json.number))
-    ? Number(json.number)
-    : Number.isFinite(Number(json.page))
-      ? Number(json.page)
-      : null;
-  const totalPages = Number.isFinite(Number(json.totalPages)) ? Number(json.totalPages) : null;
+  const paginationSource =
+    (json.metaInformation && typeof json.metaInformation === "object" ? json.metaInformation : null) ??
+    (json.meta && typeof json.meta === "object" ? json.meta : null) ??
+    (json.pagination && typeof json.pagination === "object" ? json.pagination : null) ??
+    json;
+  const requestedPageSize = numericQueryParamFromEndpoint(lookupEndpoint, ["itemsPerPage", "size", "limit"]);
+  const currentPage = Number.isFinite(Number(paginationSource.number))
+    ? Number(paginationSource.number)
+    : Number.isFinite(Number(paginationSource.page))
+      ? Number(paginationSource.page)
+      : Number.isFinite(Number(paginationSource.pageNumber))
+        ? Number(paginationSource.pageNumber)
+      : Number.isFinite(Number(paginationSource.currentPage))
+        ? Number(paginationSource.currentPage)
+        : numericQueryParamFromEndpoint(lookupEndpoint, ["pageNumber", "page", "currentPage"]);
+  const totalPages = Number.isFinite(Number(paginationSource.totalPages)) ? Number(paginationSource.totalPages) : null;
+  const usesOneBasedPageNumbers =
+    Number.isFinite(Number(paginationSource.currentPage)) || Number.isFinite(Number(paginationSource.pageNumber));
+  const hasNextPage =
+    currentPage != null && totalPages != null
+      ? usesOneBasedPageNumbers
+        ? currentPage < totalPages
+        : currentPage + 1 < totalPages
+      : currentPage != null && typeof paginationSource.last === "boolean"
+        ? paginationSource.last === false
+        : null;
+  const pageSizeFromResponse =
+    Number.isFinite(Number(json.itemsPerPage)) && Number(json.itemsPerPage) > 0
+      ? Number(json.itemsPerPage)
+      : Number.isFinite(Number(json.size)) && Number(json.size) > 0
+        ? Number(json.size)
+        : hasNextPage
+          ? articleRecordsFromResponse(json).length || null
+          : null;
+  const pageSize = normalizedArticleLookupPageSize(
+    requestedPageSize ?? pageSizeFromResponse,
+    DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE
+  );
 
-  if (currentPage != null && totalPages != null) {
+  if (currentPage != null && totalPages != null && hasNextPage != null) {
     return {
       currentPage,
       pageSize,
-      hasNextPage: currentPage + 1 < totalPages,
+      hasNextPage,
     };
   }
 
-  if (currentPage != null && typeof json.last === "boolean") {
+  if (currentPage != null && typeof paginationSource.last === "boolean") {
     return {
       currentPage,
       pageSize,
-      hasNextPage: json.last === false,
+      hasNextPage: paginationSource.last === false,
     };
   }
 
   return null;
 };
 
-const fetchEasyCashierArticleLookupPage = async ({ lookupEndpoint, articleNumbers, logger }) => {
+const fetchEasyCashierArticleLookupPage = async ({
+  lookupEndpoint,
+  articleNumbers,
+  logger,
+  assumeFilteredByArticleNumber = false,
+  optional = false,
+}) => {
   const response = await fetchEasyCashier(lookupEndpoint, {
     method: "GET",
     headers: authHeaders(),
@@ -836,6 +1138,16 @@ const fetchEasyCashierArticleLookupPage = async ({ lookupEndpoint, articleNumber
   const responseBody = await parseJsonResponse(response);
 
   if (!response.ok) {
+    if (optional && [400, 404].includes(response.status)) {
+      return {
+        lookupEndpoint,
+        status: response.status,
+        responseBody,
+        articles: [],
+        pagination: null,
+      };
+    }
+
     logger.error(
       {
         status: response.status,
@@ -849,21 +1161,49 @@ const fetchEasyCashierArticleLookupPage = async ({ lookupEndpoint, articleNumber
   }
 
   return {
+    lookupEndpoint,
+    status: response.status,
     responseBody,
-    articles: findArticlesForArticleNumbers({ json: responseBody.json, articleNumbers }),
-    pagination: articleLookupPagination(responseBody.json),
+    articles: findArticlesForArticleNumbers({
+      json: responseBody.json,
+      articleNumbers,
+      assumeFilteredByArticleNumber,
+    }),
+    pagination: articleLookupPagination(responseBody.json, lookupEndpoint),
   };
 };
 
-const resolveEasyCashierArticles = async ({ articleEndpoint, articleNumbers, logger }) => {
+const fetchLookupCandidateArticles = async ({
+  candidate,
+  articleEndpoint,
+  articleNumbers,
+  logger,
+}) => {
+  const lookupResponses = [];
+
+  const recordLookupResponse = (lookupPage) => {
+    lookupResponses.push({
+      lookupEndpoint: lookupPage.lookupEndpoint,
+      status: lookupPage.status,
+      responseBody: textForLog(lookupPage.responseBody.text, 4000),
+      pagination: lookupPage.pagination,
+    });
+  };
+
   const firstPage = await fetchEasyCashierArticleLookupPage({
-    lookupEndpoint: articleEndpoint,
+    lookupEndpoint: candidate.lookupEndpoint,
     articleNumbers,
     logger,
+    assumeFilteredByArticleNumber: candidate.assumeFilteredByArticleNumber,
+    optional: candidate.optional,
   });
+  recordLookupResponse(firstPage);
 
   if (firstPage.articles.length > 0) {
-    return firstPage.articles;
+    return {
+      articles: firstPage.articles,
+      lookupResponses: [],
+    };
   }
 
   let pagination = firstPage.pagination;
@@ -871,28 +1211,81 @@ const resolveEasyCashierArticles = async ({ articleEndpoint, articleNumbers, log
   while (pagination?.hasNextPage) {
     const nextPageNumber = pagination.currentPage + 1;
     const pagedLookup = await fetchEasyCashierArticleLookupPage({
-      lookupEndpoint: endpointWithQueryParams(articleEndpoint, {
-        page: nextPageNumber,
-        size: pagination.pageSize,
+      lookupEndpoint: endpointWithQueryParams(candidate.lookupEndpoint, {
+        pageNumber: nextPageNumber,
+        itemsPerPage: pagination.pageSize,
       }),
       articleNumbers,
       logger,
+      assumeFilteredByArticleNumber: candidate.assumeFilteredByArticleNumber,
+      optional: candidate.optional,
     });
+    recordLookupResponse(pagedLookup);
 
     if (pagedLookup.articles.length > 0) {
-      return pagedLookup.articles;
+      return {
+        articles: pagedLookup.articles,
+        lookupResponses: [],
+      };
     }
 
     pagination = pagedLookup.pagination;
   }
+
+  return {
+    articles: [],
+    lookupResponses,
+  };
+};
+
+const resolveEasyCashierArticles = async ({ articleEndpoint, articleNumbers, logger, includeQueryLookups = false }) => {
+  const failedLookupResponses = [];
+
+  for (const candidate of articleLookupCandidates({ articleEndpoint, articleNumbers, includeQueryLookups })) {
+    const { articles, lookupResponses } = await fetchLookupCandidateArticles({
+      candidate,
+      articleEndpoint,
+      articleNumbers,
+      logger,
+    });
+
+    if (articles.length > 0) {
+      return articles;
+    }
+
+    if (lookupResponses.length > 0) {
+      failedLookupResponses.push({
+        lookupEndpoint: candidate.lookupEndpoint,
+        assumeFilteredByArticleNumber: candidate.assumeFilteredByArticleNumber,
+        optional: candidate.optional,
+        responses: lookupResponses,
+      });
+    }
+  }
+
+  logger.warn(
+    {
+      articleEndpoint,
+      articleNumbers,
+      includeQueryLookups,
+      lookupQueryFields: configuredArticleLookupQueryFields(),
+      lookupResponses: failedLookupResponses,
+    },
+    "EasyCashier article lookup did not return a matching article"
+  );
 
   const error = new Error(`No EasyCashier article found for SKU lookup value(s) ${articleNumbers.join(", ")}`);
   error.code = ARTICLE_NOT_FOUND_CODE;
   throw error;
 };
 
-const resolveEasyCashierArticleId = async ({ articleEndpoint, articleNumbers, logger }) => {
-  const articles = await resolveEasyCashierArticles({ articleEndpoint, articleNumbers, logger });
+const resolveEasyCashierArticleId = async ({ articleEndpoint, articleNumbers, logger, includeQueryLookups = false }) => {
+  const articles = await resolveEasyCashierArticles({
+    articleEndpoint,
+    articleNumbers,
+    logger,
+    includeQueryLookups,
+  });
   const id = articleId(articles[0]);
 
   if (!id) {
@@ -904,41 +1297,41 @@ const resolveEasyCashierArticleId = async ({ articleEndpoint, articleNumbers, lo
   return id;
 };
 
-const resolveEasyCashierArticle = async ({ articleEndpoint, articleNumbers, logger }) => {
-  const articles = await resolveEasyCashierArticles({ articleEndpoint, articleNumbers, logger });
+const resolveEasyCashierArticle = async ({ articleEndpoint, articleNumbers, logger, includeQueryLookups = false }) => {
+  const articles = await resolveEasyCashierArticles({
+    articleEndpoint,
+    articleNumbers,
+    logger,
+    includeQueryLookups,
+  });
 
   return articles[0];
 };
 
-const articleIdFromResponseBodyText = (responseBodyText) => {
-  const responseJson = parseJsonText(responseBodyText);
+const resolveKnownEasyCashierArticleId = ({ product }) => {
+  const explicitArticleId = product?.easycashierArticleId ?? null;
 
-  if (!responseJson) {
-    return null;
-  }
-
-  return articleId(responseJson) == null ? null : String(articleId(responseJson));
-};
-
-const easyCashierArticleIdFromSyncLog = (log) => {
-  const requests = Array.isArray(log?.details?.requests) ? log.details.requests : [];
-
-  for (let index = requests.length - 1; index >= 0; index -= 1) {
-    const request = requests[index];
-    const responseBodyArticleId = articleIdFromResponseBodyText(request?.responseBody);
-
-    if (responseBodyArticleId) {
-      return responseBodyArticleId;
-    }
+  if (explicitArticleId != null && explicitArticleId !== "") {
+    return String(explicitArticleId);
   }
 
   return null;
 };
 
-const resolveRequestEndpoint = async ({ api, articleEndpoint, endpointName, payload, product, logger }) => {
+const resolveRequestEndpoint = async ({
+  api,
+  articleEndpoint,
+  endpointName,
+  payload,
+  product,
+  logger,
+  includeQueryLookups = endpointName !== "create",
+}) => {
   if (endpointName === "delete") {
-    if (product?.easycashierArticleId) {
-      return `${articleEndpoint}/${encodeURIComponent(product.easycashierArticleId)}`;
+    const knownEasyCashierArticleId = resolveKnownEasyCashierArticleId({ product });
+
+    if (knownEasyCashierArticleId) {
+      return `${articleEndpoint}/${encodeURIComponent(knownEasyCashierArticleId)}`;
     }
 
     const articleNumbers = articleNumbersForLookup(product);
@@ -946,9 +1339,22 @@ const resolveRequestEndpoint = async ({ api, articleEndpoint, endpointName, payl
       articleEndpoint,
       articleNumbers,
       logger,
+      includeQueryLookups,
     });
 
     return `${articleEndpoint}/${encodeURIComponent(easyCashierArticleId)}`;
+  }
+
+  const knownEasyCashierArticleId = resolveKnownEasyCashierArticleId({ product });
+
+  if (knownEasyCashierArticleId) {
+    return `${articleEndpoint}/${encodeURIComponent(knownEasyCashierArticleId)}`;
+  }
+
+  const cachedArticleId = cachedEasyCashierArticleId({ articleEndpoint, product });
+
+  if (cachedArticleId) {
+    return `${articleEndpoint}/${encodeURIComponent(cachedArticleId)}`;
   }
 
   const articleNumbers = articleNumbersForLookup(product);
@@ -958,6 +1364,17 @@ const resolveRequestEndpoint = async ({ api, articleEndpoint, endpointName, payl
       articleEndpoint,
       articleNumbers,
       logger,
+      includeQueryLookups,
+    });
+
+    cacheEasyCashierArticleId({
+      articleEndpoint,
+      product,
+      article: {
+        id: easyCashierArticleId,
+        articleNumber: articleNumbers[0],
+        webshopArticleId: product?.shopifyProductId ?? null,
+      },
     });
 
     return `${articleEndpoint}/${encodeURIComponent(easyCashierArticleId)}`;
@@ -970,9 +1387,9 @@ const resolveRequestEndpoint = async ({ api, articleEndpoint, endpointName, payl
   return articleEndpoint;
 };
 
-const createDuplicateArticleError = ({ requestEndpointName, responseStatus, responseBodyText }) => {
+const createDuplicateArticleInfo = ({ requestEndpointName, responseStatus, responseBodyText }) => {
   if (requestEndpointName !== "create" || responseStatus !== 400) {
-    return false;
+    return null;
   }
 
   const responseJson = parseJsonText(responseBodyText);
@@ -985,14 +1402,25 @@ const createDuplicateArticleError = ({ requestEndpointName, responseStatus, resp
     .filter((message) => message != null && message !== "")
     .map((message) => String(message));
 
-  return messages.some((message) => /already exists/i.test(message));
+  const duplicateMessage = messages.find((message) => /already exists/i.test(message));
+
+  if (!duplicateMessage) {
+    return null;
+  }
+
+  return {
+    articleNumber: duplicateMessage.match(/Article number\s+"([^"]+)"/i)?.[1] ?? null,
+    message: duplicateMessage,
+  };
 };
 
-const expandDeleteProductsWithEasyCashierMatches = async ({ articleEndpoint, products, logger }) => {
+const expandDeleteProductsWithEasyCashierMatches = async ({ api, payload, articleEndpoint, products, logger }) => {
   const expandedProducts = [];
 
   for (const product of products) {
-    if (product?.easycashierArticleId) {
+    const knownEasyCashierArticleId = resolveKnownEasyCashierArticleId({ product });
+
+    if (knownEasyCashierArticleId) {
       expandedProducts.push(product);
       continue;
     }
@@ -1005,6 +1433,7 @@ const expandDeleteProductsWithEasyCashierMatches = async ({ articleEndpoint, pro
         articleEndpoint,
         articleNumbers,
         logger,
+        includeQueryLookups: true,
       });
     } catch (error) {
       if (error?.code !== ARTICLE_NOT_FOUND_CODE) {
@@ -1324,6 +1753,7 @@ const syncEasyCashierInventory = async ({ articleEndpoint, product, responseBody
       articleEndpoint,
       articleNumbers,
       logger,
+      includeQueryLookups: true,
     });
   }
 
@@ -1360,7 +1790,6 @@ export const sendEasyCashierProductPayload = async ({
     shopifyProductId: payload?.shopifyProductId ?? null,
     requests: [],
   };
-  let easycashierArticleNumber = null;
 
   try {
     const articleEndpoint = resolveEndpoint(endpoint);
@@ -1368,6 +1797,8 @@ export const sendEasyCashierProductPayload = async ({
 
     if (endpointName === "delete") {
       products = await expandDeleteProductsWithEasyCashierMatches({
+        api,
+        payload,
         articleEndpoint,
         products,
         logger,
@@ -1415,7 +1846,6 @@ export const sendEasyCashierProductPayload = async ({
 
       const articlePayload = requestMethod === "DELETE" ? null : buildEasyCashierArticlePayload(product);
       const requestArticleNumber = articlePayload?.articleNumber ?? optionalArticleNumberFromProduct(product) ?? null;
-      easycashierArticleNumber ??= requestArticleNumber;
       requestDetails.endpointName = requestEndpointName;
       requestDetails.method = requestMethod;
       requestDetails.endpoint = resolvedEndpoint;
@@ -1441,11 +1871,13 @@ export const sendEasyCashierProductPayload = async ({
 
       const deleteAlreadyMissing = requestMethod === "DELETE" && response.status === 404;
 
-      if (createDuplicateArticleError({
+      const duplicateArticleInfo = createDuplicateArticleInfo({
         requestEndpointName,
         responseStatus: response.status,
         responseBodyText: responseBody,
-      })) {
+      });
+
+      if (duplicateArticleInfo) {
         const retryEndpoint = await resolveRequestEndpoint({
           api,
           articleEndpoint,
@@ -1453,6 +1885,7 @@ export const sendEasyCashierProductPayload = async ({
           payload,
           product,
           logger,
+          includeQueryLookups: true,
         });
 
         if (retryEndpoint !== articleEndpoint) {
@@ -1481,6 +1914,30 @@ export const sendEasyCashierProductPayload = async ({
             resolvedEndpoint = retryEndpoint;
             requestDetails.retryRecoveredAsUpdate = true;
           }
+        } else {
+          requestDetails.duplicateArticleAlreadyExists = true;
+          requestDetails.duplicateArticleMessage = duplicateArticleInfo.message;
+          requestDetails.retryLookupFailed = true;
+          syncDetails.unresolvedDuplicateCreateCount = (syncDetails.unresolvedDuplicateCreateCount ?? 0) + 1;
+
+          logger.warn(
+            {
+              endpointName: requestEndpointName,
+              originalEndpointName: endpointName,
+              status: response.status,
+              event: payload?.event,
+              productId: payload?.shopifyProductId,
+              articleNumber: duplicateArticleInfo.articleNumber ?? requestArticleNumber,
+              sourceProduct: productDetailsForLog(product),
+              ...articleLookupDebugContext({
+                articleEndpoint,
+                product,
+                includeQueryLookups: true,
+              }),
+            },
+            "EasyCashier article already exists but could not be resolved for update; skipping this product"
+          );
+          continue;
         }
       }
 
@@ -1528,15 +1985,32 @@ export const sendEasyCashierProductPayload = async ({
         requestDetails.inventoryMovementCount = inventoryMovementCount;
         syncDetails.inventoryMovementCount = (syncDetails.inventoryMovementCount ?? 0) + inventoryMovementCount;
       }
-    }
 
-    await createProductSyncLog({
-      api,
-      payload,
-      status: "success",
-      details: syncDetails,
-      easycashierArticleNumber,
-    });
+      if (requestMethod !== "DELETE") {
+        const responseArticle = articleFromResponseJson({
+          json: parseJsonText(responseBody),
+          articleNumbers: articleNumbersForLookup(product),
+        });
+
+        if (responseArticle) {
+          cacheEasyCashierArticleId({
+            articleEndpoint,
+            product,
+            article: responseArticle,
+          });
+        } else if (resolvedEndpoint !== articleEndpoint) {
+          cacheEasyCashierArticleId({
+            articleEndpoint,
+            product,
+            article: {
+              id: decodeURIComponent(resolvedEndpoint.split("/").pop() ?? ""),
+              articleNumber: requestArticleNumber,
+              webshopArticleId: product?.shopifyProductId ?? null,
+            },
+          });
+        }
+      }
+    }
 
     logger.info(
       {
@@ -1550,15 +2024,353 @@ export const sendEasyCashierProductPayload = async ({
 
     return { success: true, productCount: products.length };
   } catch (error) {
-    syncDetails.errorMessage = errorMessageForLog(error);
-    await recordProductSyncFailure({
-      api,
-      payload,
-      logger,
-      error,
-      details: syncDetails,
-      easycashierArticleNumber,
-    });
+    logger.error(
+      {
+        endpointName,
+        event: payload?.event,
+        productId: payload?.shopifyProductId,
+        error,
+        errorMessage: errorMessageForLog(error),
+      },
+      "Failed to send Shopify product payload to EasyCashier"
+    );
     throw error;
   }
+};
+
+const BULK_IMPORT_HEADERS = [
+  "Artikelnummer",
+  "Benämning",
+  "Försäljningspris (inkl. moms)",
+  "Moms",
+  "Kontonummer",
+  "Artikeltyp",
+  "Streckkod",
+  "Streckkod 2",
+  "Artikelgrupp",
+  "Inköpspris (exkl. moms)",
+  "Genomsnittligt inköpspris (exkl. moms)",
+  "Lagervara",
+  "Beställningspunkt",
+  "Beställningsantal",
+  "Lagerplats",
+  "Lösvikt",
+  "Ackumulativ",
+  "Fråga efter antal",
+  "Text vid försäljning",
+  "Leverantörs artikelnummer",
+  "Leverantörsnummer",
+  "Används ej",
+  "Extrapris startdatum",
+  "Extrapris slutdatum",
+  "Extrapris rabatt",
+  "Webshop",
+  "Webshop artikel id",
+];
+
+const csvValue = (value) => {
+  if (value == null || value === "") {
+    return "";
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "1" : "";
+  }
+
+  return String(value);
+};
+
+const csvEscape = (value) => {
+  const text = csvValue(value);
+
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  return text;
+};
+
+const csvLine = (values) => values.map((value) => csvEscape(value)).join(",");
+
+const csvStorageAreaForProductRows = (productRows) => {
+  const storageAreas = [];
+  const seenStorageAreaKeys = new Set();
+
+  for (const productRow of productRows ?? []) {
+    for (const inventoryLevel of productRow?.inventoryByLocation ?? []) {
+      const locationName = inventoryLevel?.locationName ?? inventoryLevel?.locationId ?? null;
+
+      if (!locationName) {
+        continue;
+      }
+
+      const storageArea = `${locationName}: ${inventoryLevel?.available ?? 0}`;
+
+      if (seenStorageAreaKeys.has(storageArea)) {
+        continue;
+      }
+
+      seenStorageAreaKeys.add(storageArea);
+      storageAreas.push(storageArea);
+    }
+  }
+
+  return storageAreas.length > 0 ? storageAreas.join(", ") : "-";
+};
+
+const bulkArticleRowFromPayload = ({ articlePayload, storageArea }) => [
+  articlePayload.articleNumber,
+  articlePayload.description,
+  articlePayload.retailPriceIncludingVat,
+  articlePayload.vat,
+  articlePayload.accountNumber,
+  articlePayload.articleType === "SERVICE" ? "Tjänst" : "Produkt",
+  articlePayload.barcode,
+  "",
+  "",
+  "",
+  "",
+  articlePayload.stockItem,
+  0,
+  0,
+  storageArea,
+  articlePayload.freeWeight,
+  articlePayload.accumulative,
+  articlePayload.askForQuantity,
+  articlePayload.addTextWhenSold,
+  articlePayload.supplierArticleNumber,
+  articlePayload.supplierNumber,
+  false,
+  "",
+  "",
+  "",
+  articlePayload.webshop,
+  articlePayload.webshopArticleId,
+];
+
+const configuredBulkImportStoreNumbers = () => {
+  const mappings = configuredEasyCashierStockLocationMappings();
+  const mappedStoreNumbers = mappings
+    .map((mapping) => mapping.easyCashierStoreNumber)
+    .filter((storeNumber) => storeNumber != null && Number.isFinite(Number(storeNumber)));
+
+  if (mappedStoreNumbers.length > 0) {
+    return [...new Set(mappedStoreNumbers.map((storeNumber) => Number(storeNumber)))];
+  }
+
+  return [configuredNumber("EASYCASHIER_STORE_NUMBER", 1)];
+};
+
+const isMissingShopifySkuError = (error) =>
+  errorMessageForLog(error).includes("Missing Shopify SKU in EasyCashier product payload");
+
+const isShopifyNetworkError = (error) => {
+  const message = errorMessageForLog(error);
+
+  return error?.name === "CombinedError" || message.includes("[Network]") || message.includes("Bad Gateway");
+};
+
+export const sendEasyCashierBulkProductImport = async ({
+  logger,
+  connections,
+  shopId,
+  productIds,
+  signal,
+  batchNumber = null,
+  batchCount = null,
+}) => {
+  const normalizedProductIds = (Array.isArray(productIds) ? productIds : [])
+    .map((productId) => (productId == null ? null : String(productId)))
+    .filter((productId) => productId != null && productId !== "");
+  const normalizedBatchNumber =
+    Number.isFinite(Number(batchNumber)) && Number(batchNumber) > 0 ? Number(batchNumber) : null;
+  const normalizedBatchCount =
+    Number.isFinite(Number(batchCount)) && Number(batchCount) > 0 ? Number(batchCount) : null;
+  const batchProgress = {
+    batchNumber: normalizedBatchNumber,
+    batchCount: normalizedBatchCount,
+  };
+  const batchLabel =
+    normalizedBatchNumber != null && normalizedBatchCount != null
+      ? `${normalizedBatchNumber}/${normalizedBatchCount}`
+      : null;
+
+  if (normalizedProductIds.length === 0) {
+    return {
+      successProductIds: [],
+      failedProductIds: [],
+      importedRowCount: 0,
+      uploadAttempted: false,
+    };
+  }
+
+  logger.info(
+    {
+      shopId,
+      ...batchProgress,
+      productCount: normalizedProductIds.length,
+    },
+    batchLabel
+      ? `Starting EasyCashier bulk sync batch ${batchLabel}`
+      : "Starting EasyCashier bulk sync batch"
+  );
+
+  const articleRows = [];
+  const successProductIds = [];
+  const failedProductIds = [];
+  const articleEndpoint = resolveEndpoint("EASYCASHIER_API_BASE_URL/EASYCASHIER_COMPANY_ID/article");
+  const importEndpoint = resolveEndpoint("EASYCASHIER_API_BASE_URL/EASYCASHIER_COMPANY_ID/import/articles");
+
+  for (const productId of normalizedProductIds) {
+    if (typeof signal?.throwIfAborted === "function") {
+      signal.throwIfAborted();
+    } else if (signal?.aborted) {
+      throw new Error("EasyCashier bulk sync was cancelled");
+    }
+
+    try {
+      const productRows = await fetchFreshShopifyProductRows({
+        connections,
+        payload: {
+          shopId,
+          shopifyProductId: productId,
+        },
+      });
+
+      if (!Array.isArray(productRows) || productRows.length === 0) {
+        throw new Error(`No Shopify variants found for product ${productId}`);
+      }
+
+      const missingSkuRows = productRows.filter(isMissingShopifySkuProduct);
+
+      if (missingSkuRows.length > 0) {
+        logger.warn(
+          {
+            shopId,
+            ...batchProgress,
+            productId,
+            missingSkuVariantIds: missingSkuRows
+              .map((productRow) => optionalVariantIdentifierFromProduct(productRow))
+              .filter((variantId) => variantId != null),
+            fallbackArticleNumbers: missingSkuRows
+              .map((productRow) => optionalArticleNumberFromProduct(productRow))
+              .filter((articleNumber) => articleNumber != null),
+          },
+          batchLabel
+            ? `Shopify product is missing SKU for EasyCashier bulk import; using variant id fallback (${batchLabel})`
+            : "Shopify product is missing SKU for EasyCashier bulk import; using variant id fallback"
+        );
+      }
+
+      const storageArea = csvStorageAreaForProductRows(productRows);
+      const productArticleRows = productRows.map((productRow) => {
+        const articlePayload = buildEasyCashierArticlePayload(productRow);
+
+        return bulkArticleRowFromPayload({
+          articlePayload,
+          storageArea,
+        });
+      });
+
+      articleRows.push(...productArticleRows);
+      successProductIds.push(productId);
+    } catch (error) {
+      failedProductIds.push(productId);
+
+      if (isMissingShopifySkuError(error)) {
+        logger.warn(
+          {
+            shopId,
+            ...batchProgress,
+            productId,
+            errorMessage: errorMessageForLog(error),
+          },
+          batchLabel
+            ? `Skipped Shopify product in EasyCashier bulk import because SKU is missing (${batchLabel})`
+            : "Skipped Shopify product in EasyCashier bulk import because SKU is missing"
+        );
+        continue;
+      }
+
+      logger.error(
+        {
+          error,
+          shopId,
+          ...batchProgress,
+          productId,
+          errorMessage: errorMessageForLog(error),
+        },
+        isShopifyNetworkError(error)
+          ? batchLabel
+            ? `Failed to fetch Shopify product rows for EasyCashier bulk import (${batchLabel})`
+            : "Failed to fetch Shopify product rows for EasyCashier bulk import"
+          : batchLabel
+            ? `Failed to prepare Shopify product rows for EasyCashier bulk import (${batchLabel})`
+            : "Failed to prepare Shopify product rows for EasyCashier bulk import"
+      );
+    }
+  }
+
+  if (articleRows.length === 0) {
+    return {
+      successProductIds,
+      failedProductIds,
+      importedRowCount: 0,
+      uploadAttempted: false,
+    };
+  }
+
+  const csvBody = [csvLine(BULK_IMPORT_HEADERS), ...articleRows.map((row) => csvLine(row))].join("\n");
+  const fileName = `EC4_export_${Date.now()}.csv`;
+  const formData = new FormData();
+
+  formData.append("storeNumbers", configuredBulkImportStoreNumbers().join(","));
+  formData.append("file", new Blob([csvBody], { type: "text/csv" }), fileName);
+
+  const response = await fetchEasyCashier(importEndpoint, {
+    method: "POST",
+    headers: authHeaders({ contentType: null }),
+    body: formData,
+    signal,
+  });
+  const responseBody = await parseJsonResponse(response);
+
+  if (!response.ok) {
+    logger.error(
+      {
+        shopId,
+        productCount: successProductIds.length,
+        importedRowCount: articleRows.length,
+        status: response.status,
+        responseBody: textForLog(responseBody.text),
+      },
+      "EasyCashier bulk article import failed"
+    );
+    throw new Error(`EasyCashier bulk article import failed with status ${response.status}`);
+  }
+
+  logger.info(
+    {
+      shopId,
+      ...batchProgress,
+      productCount: successProductIds.length,
+      failedProductCount: failedProductIds.length,
+      importedRowCount: articleRows.length,
+      status: response.status,
+      endpoint: articleEndpoint,
+      importEndpoint,
+    },
+    batchLabel
+      ? `Imported Shopify products to EasyCashier in bulk (${batchLabel})`
+      : "Imported Shopify products to EasyCashier in bulk"
+  );
+
+  return {
+    successProductIds,
+    failedProductIds,
+    importedRowCount: articleRows.length,
+    uploadAttempted: true,
+    responseStatus: response.status,
+    responseBody: responseBody.text,
+  };
 };

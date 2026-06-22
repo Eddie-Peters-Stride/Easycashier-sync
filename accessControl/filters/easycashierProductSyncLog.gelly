@@ -1,3 +1,0 @@
-filter ($session: Session) on EasycashierProductSyncLog [
-  where shopId == $session.shopId
-]

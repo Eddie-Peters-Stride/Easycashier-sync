@@ -20,5 +20,6 @@ export const run = async ({ params, logger, api, connections }) => {
 
 /** @type { ActionOptions } */
 export const options = {
+  timeoutMS: 900000,
   triggers: { api: true },
 };

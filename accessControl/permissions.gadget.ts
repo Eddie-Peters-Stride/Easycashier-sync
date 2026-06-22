@@ -12,12 +12,6 @@ export const permissions: GadgetPermissions = {
     "shopify-app-users": {
       storageKey: "Role-Shopify-App",
       models: {
-        easycashierProductSyncLog: {
-          read: {
-            filter:
-              "accessControl/filters/easycashierProductSyncLog.gelly",
-          },
-        },
         shopifyCatalog: {
           read: {
             filter:
@@ -124,6 +118,7 @@ export const permissions: GadgetPermissions = {
       },
       actions: {
         scheduledShopifySync: true,
+        syncAllProductsToEasyCashier: true,
       },
     },
     unauthenticated: {
