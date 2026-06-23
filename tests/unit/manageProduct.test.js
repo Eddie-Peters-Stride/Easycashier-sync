@@ -6,6 +6,7 @@ import {
   enqueueShopifyProductVariantDeleteEasyCashierSync,
   isProductWebhookTrigger,
   productEventForTrigger,
+  shopifyProductUpdateNeedsSync,
 } from "../../api/lib/manageProduct.js";
 import { createApiStub, createLogger } from "../support/easycashierTestHelpers.js";
 
@@ -57,6 +58,19 @@ describe("manageProduct helpers", () => {
     assert.equal(payload.products[0].shopifyVariantId, "222");
     assert.equal(payload.products[0].artikelnummer, null);
     assert.equal(payload.products[0].inventoryQuantity, 5);
+  });
+
+  test("shopifyProductUpdateNeedsSync returns true when only variants changed", () => {
+    assert.equal(
+      shopifyProductUpdateNeedsSync({
+        changes(field) {
+          return {
+            changed: field === "variants",
+          };
+        },
+      }),
+      true
+    );
   });
 
   test("skips variant delete sync when the SKU is missing", async () => {

@@ -40,6 +40,11 @@ export const isProductWebhookTrigger = (trigger) =>
 export const productEventForTrigger = (trigger, fallbackEvent) =>
   PRODUCT_WEBHOOK_EVENTS[trigger?.topic] ?? fallbackEvent;
 
+// Shopify product price edits surface through the variants relation, not a
+// top-level product price field.
+export const shopifyProductUpdateNeedsSync = (record) =>
+  Boolean(record?.changes("title")?.changed || record?.changes("variants")?.changed);
+
 const normalizeRawVariant = (variant) => ({
   id: variant.id == null ? null : String(variant.id),
   gid: variant.admin_graphql_api_id ?? null,
@@ -594,7 +599,7 @@ export const enqueueShopifyProductVariantInventoryEasyCashierSync = async ({
         variantId: record?.id ?? null,
         shopId: record?.shopId ?? trigger?.shopId ?? null,
       },
-      "Skipped EasyCashier variant inventory sync because the Shopify product id was missing"
+      "Skipped EasyCashier variant sync because the Shopify product id was missing"
     );
     return;
   }
