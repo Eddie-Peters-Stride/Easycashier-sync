@@ -1,6 +1,6 @@
-import { deleteRecord, ActionOptions } from "gadget-server";
+import { deleteRecord } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
-import { enqueueShopifyProductEasyCashierSync } from "../../../lib/manageProduct.js";
+import { enqueueShopifyProductEasyCashierSync, isProductWebhookTrigger } from "../../../lib/manageProduct.js";
 
 const skipsGadgetProductStorage = (trigger) =>
   ["shopify_webhook", "shopify_sync", "shopify_webhook_reconciliation"].includes(trigger?.type);
@@ -17,6 +17,10 @@ export const run = async ({ params, record, logger, api, connections, trigger })
 
 /** @type { ActionOnSuccess } */
 export const onSuccess = async ({ params, record, logger, api, connections, trigger }) => {
+  if (isProductWebhookTrigger(trigger)) {
+    return;
+  }
+
   await enqueueShopifyProductEasyCashierSync({
     api,
     logger,
@@ -29,9 +33,4 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
 /** @type { ActionOptions } */
 export const options = {
   actionType: "delete",
-  triggers: {
-    shopify: {
-      triggerKey: "shopifyproduct-delete",
-    },
-  },
 };

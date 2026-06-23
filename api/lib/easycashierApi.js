@@ -13,6 +13,7 @@ const authHeaders = ({ contentType = "application/json" } = {}) => {
 };
 
 const ARTICLE_NOT_FOUND_CODE = "EASYCASHIER_ARTICLE_NOT_FOUND";
+const SHOPIFY_PRODUCT_NOT_FOUND_CODE = "SHOPIFY_PRODUCT_NOT_FOUND";
 const DEFAULT_EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE = 300;
 const DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_COUNT = 3;
 const DEFAULT_EASYCASHIER_RATE_LIMIT_RETRY_BASE_MS = 2000;
@@ -21,8 +22,16 @@ const MAX_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE = 500;
 const DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE = MAX_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE;
 const DEFAULT_SHOPIFY_LOCATION_PAGE_SIZE = 20;
 const STOCK_QUANTITY_CHANGE_TOLERANCE = 0.000001;
-const DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_QUERY_FIELDS = ["articleNumber", "artikelnummer", "sku", "q", "search"];
+const DEFAULT_EASYCASHIER_ARTICLE_LOOKUP_QUERY_FIELDS = [
+  "articleNumber",
+  "artikelnummer",
+  "sku",
+  "webshopArticleId",
+  "q",
+  "search",
+];
 const easyCashierArticleIdCache = new Map();
+const easyCashierStockQuantityCache = new Map();
 
 const textForLog = (value, maxLength = 2000) => {
   if (value == null) {
@@ -350,13 +359,14 @@ const deleteProductRowFromPayload = (payload) => {
     payload?.articleNumber ??
     optionalVariantIdentifierFromProduct(payload) ??
     null;
+  const shopifyProductId = firstProductRow?.shopifyProductId ?? payload?.shopifyProductId ?? payload?.id ?? null;
 
-  if (!sku) {
+  if (!sku && shopifyProductId == null) {
     return null;
   }
 
   return {
-    shopifyProductId: payload?.shopifyProductId == null ? null : String(payload.shopifyProductId),
+    shopifyProductId: shopifyProductId == null ? null : String(shopifyProductId),
     shopifyVariantId: firstProductRow?.shopifyVariantId ?? null,
     shopifyVariantGid: firstProductRow?.shopifyVariantGid ?? null,
     artikelnummer: sku,
@@ -404,6 +414,16 @@ const parseShopifyGraphqlResult = (result) => {
 
   return data;
 };
+
+const createShopifyProductNotFoundError = (productGid) => {
+  const error = new Error(`Shopify product ${productGid} was not found`);
+  error.code = SHOPIFY_PRODUCT_NOT_FOUND_CODE;
+  return error;
+};
+
+const isShopifyProductNotFoundError = (error) =>
+  error?.code === SHOPIFY_PRODUCT_NOT_FOUND_CODE ||
+  /Shopify product .* was not found/i.test(error?.message ?? "");
 
 const fetchFreshShopifyProductRows = async ({ connections, payload }) => {
   const productGid = productGidFromPayload(payload);
@@ -471,7 +491,7 @@ const fetchFreshShopifyProductRows = async ({ connections, payload }) => {
     product = data?.product;
 
     if (!product) {
-      throw new Error(`Shopify product ${productGid} was not found`);
+      throw createShopifyProductNotFoundError(productGid);
     }
 
     variants.push(...(product.variants?.nodes ?? []).map(normalizeShopifyVariant));
@@ -582,6 +602,44 @@ const articleNumbersForLookup = (product) => {
   }
 
   return [articleNumber];
+};
+
+const deletePayloadFromShopifyProductPayload = (payload) => {
+  const deleteProductRow = deleteProductRowFromPayload(payload);
+
+  if (!deleteProductRow) {
+    return null;
+  }
+
+  return {
+    event: "deleted",
+    topic: "products/delete",
+    shopId: payload?.shopId ?? null,
+    shopDomain: payload?.shopDomain ?? null,
+    shopifyProductId: deleteProductRow.shopifyProductId,
+    shopifyProductGid:
+      payload?.shopifyProductGid ??
+      (deleteProductRow.shopifyProductId == null
+        ? null
+        : `gid://shopify/Product/${deleteProductRow.shopifyProductId}`),
+    produktnamn: payload?.produktnamn ?? deleteProductRow?.produktnamn ?? null,
+    products: [deleteProductRow],
+  };
+};
+
+const deleteLookupValuesForProduct = (product) => {
+  const lookupValues = [];
+  const articleNumber = optionalArticleNumberFromProduct(product);
+
+  if (articleNumber) {
+    lookupValues.push(articleNumber);
+  }
+
+  if (product?.shopifyProductId != null && product.shopifyProductId !== "") {
+    lookupValues.push(String(product.shopifyProductId));
+  }
+
+  return [...new Set(lookupValues)];
 };
 
 const numberFromValue = (value, defaultValue = 0) => {
@@ -831,7 +889,13 @@ const articleId = (article) =>
   article?.id ?? article?.articleId ?? article?.article_id ?? article?.articleUuid ?? article?.article_uuid ?? article?.uuid;
 
 const webshopArticleIdFromArticle = (article) =>
-  article?.webshopArticleId ?? article?.webshop_article_id ?? article?.webshopId ?? article?.webshop_id;
+  article?.webshopArticleId ??
+  article?.webshopArticleID ??
+  article?.webshop_article_id ??
+  article?.webshopArtikelId ??
+  article?.webshop_artikel_id ??
+  article?.webshopId ??
+  article?.webshop_id;
 
 const easyCashierArticleIdCacheKey = ({ articleEndpoint, fieldName, fieldValue }) =>
   `${articleEndpoint}|${fieldName}|${String(fieldValue).trim()}`;
@@ -851,14 +915,32 @@ const easyCashierArticleIdCacheEntry = (cacheKey) => {
   return entry;
 };
 
-const cachedEasyCashierArticleId = ({ articleEndpoint, product }) => {
+const easyCashierStockQuantityCacheKey = ({ articleEndpoint, fieldName, fieldValue, storeNumber }) =>
+  `${articleEndpoint}|stock|${fieldName}|${String(fieldValue).trim()}|${storeNumber}`;
+
+const easyCashierStockQuantityCacheEntry = (cacheKey) => {
+  const entry = easyCashierStockQuantityCache.get(cacheKey);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    easyCashierStockQuantityCache.delete(cacheKey);
+    return null;
+  }
+
+  return entry;
+};
+
+const easyCashierProductLookupCacheValues = ({ product }) => {
   const lookupValues = [];
   const articleNumber = optionalArticleNumberFromProduct(product);
 
   if (articleNumber) {
     lookupValues.push({
       fieldName: "articleNumber",
-      fieldValue: articleNumber,
+      fieldValue: String(articleNumber),
     });
   }
 
@@ -869,7 +951,65 @@ const cachedEasyCashierArticleId = ({ articleEndpoint, product }) => {
     });
   }
 
-  for (const lookupValue of lookupValues) {
+  return lookupValues;
+};
+
+const cachedEasyCashierQuantityForStore = ({ articleEndpoint, product, storeNumber }) => {
+  for (const lookupValue of easyCashierProductLookupCacheValues({ product })) {
+    const entry = easyCashierStockQuantityCacheEntry(
+      easyCashierStockQuantityCacheKey({
+        articleEndpoint,
+        ...lookupValue,
+        storeNumber,
+      })
+    );
+
+    if (entry?.quantity != null && Number.isFinite(Number(entry.quantity))) {
+      return Number(entry.quantity);
+    }
+  }
+
+  return null;
+};
+
+const cacheEasyCashierStockLevels = ({ articleEndpoint, product, stockLevels }) => {
+  const lookupValues = easyCashierProductLookupCacheValues({ product });
+
+  if (lookupValues.length === 0 || !Array.isArray(stockLevels) || stockLevels.length === 0) {
+    return;
+  }
+
+  const expiresAt = Date.now() + configuredEasyCashierArticleIdCacheTtlMs();
+
+  for (const stockLevel of stockLevels) {
+    if (stockLevel?.storeNumber == null || stockLevel?.desiredQuantity == null) {
+      continue;
+    }
+
+    const normalizedQuantity = Number(stockLevel.desiredQuantity);
+
+    if (!Number.isFinite(normalizedQuantity)) {
+      continue;
+    }
+
+    for (const lookupValue of lookupValues) {
+      easyCashierStockQuantityCache.set(
+        easyCashierStockQuantityCacheKey({
+          articleEndpoint,
+          ...lookupValue,
+          storeNumber: stockLevel.storeNumber,
+        }),
+        {
+          quantity: normalizedQuantity,
+          expiresAt,
+        }
+      );
+    }
+  }
+};
+
+const cachedEasyCashierArticleId = ({ articleEndpoint, product }) => {
+  for (const lookupValue of easyCashierProductLookupCacheValues({ product })) {
     const entry = easyCashierArticleIdCacheEntry(
       easyCashierArticleIdCacheKey({
         articleEndpoint,
@@ -933,6 +1073,7 @@ const cacheEasyCashierArticleId = ({ articleEndpoint, product, article }) => {
 const articleLookupValues = (article) =>
   [
     articleNumber(article),
+    webshopArticleIdFromArticle(article),
   ]
     .filter((value) => value != null && value !== "")
     .map((value) => String(value).trim());
@@ -1335,10 +1476,15 @@ const resolveRequestEndpoint = async ({
       return `${articleEndpoint}/${encodeURIComponent(knownEasyCashierArticleId)}`;
     }
 
-    const articleNumbers = articleNumbersForLookup(product);
+    const articleLookupValues = deleteLookupValuesForProduct(product);
+
+    if (articleLookupValues.length === 0) {
+      throw new Error("Missing Shopify product id in EasyCashier delete payload");
+    }
+
     const easyCashierArticleId = await resolveEasyCashierArticleId({
       articleEndpoint,
-      articleNumbers,
+      articleNumbers: articleLookupValues,
       logger,
       includeQueryLookups,
     });
@@ -1426,13 +1572,23 @@ const expandDeleteProductsWithEasyCashierMatches = async ({ api, payload, articl
       continue;
     }
 
-    const articleNumbers = articleNumbersForLookup(product);
+    const articleLookupValues = deleteLookupValuesForProduct(product);
     let matchingArticles = [];
 
     try {
+      if (articleLookupValues.length === 0) {
+        logger.info(
+          {
+            shopifyProductId: product?.shopifyProductId ?? null,
+          },
+          "Skipped EasyCashier delete because no Shopify product id was available"
+        );
+        continue;
+      }
+
       matchingArticles = await resolveEasyCashierArticles({
         articleEndpoint,
-        articleNumbers,
+        articleNumbers: articleLookupValues,
         logger,
         includeQueryLookups: true,
       });
@@ -1442,27 +1598,34 @@ const expandDeleteProductsWithEasyCashierMatches = async ({ api, payload, articl
       }
     }
 
-    const easyCashierArticleIds = matchingArticles
-      .map((article) => articleId(article))
-      .filter((easycashierArticleId) => easycashierArticleId != null && easycashierArticleId !== "");
+    const matchingDeleteProducts = matchingArticles
+      .map((article) => {
+        const easycashierArticleId = articleId(article);
 
-    if (easyCashierArticleIds.length === 0) {
+        if (easycashierArticleId == null || easycashierArticleId === "") {
+          return null;
+        }
+
+        return {
+          ...product,
+          easycashierArticleId: String(easycashierArticleId),
+          artikelnummer: articleNumber(article) ?? product?.artikelnummer ?? null,
+        };
+      })
+      .filter(Boolean);
+
+    if (matchingDeleteProducts.length === 0) {
       logger.info(
         {
           shopifyProductId: product?.shopifyProductId ?? null,
-          articleNumbers,
+          articleNumbers: articleLookupValues,
         },
         "Skipped EasyCashier delete because no live article matched"
       );
       continue;
     }
 
-    expandedProducts.push(
-      ...easyCashierArticleIds.map((easycashierArticleId) => ({
-        ...product,
-        easycashierArticleId: String(easycashierArticleId),
-      }))
-    );
+    expandedProducts.push(...matchingDeleteProducts);
   }
 
   return expandedProducts;
@@ -1551,8 +1714,16 @@ const articleFromResponseJson = ({ json, articleNumbers }) => {
   return articles[0] ?? articleRecordsFromResponse(json)[0] ?? null;
 };
 
-const currentEasyCashierQuantityForStore = ({ article, storeNumber, allowArticleStockQuantity }) => {
-  const matchingStockEntry = stockEntriesFromArticle(article).find(
+const currentEasyCashierQuantityForStore = ({
+  articleEndpoint,
+  product,
+  article,
+  storeNumber,
+  allowArticleStockQuantity,
+  defaultQuantity = null,
+}) => {
+  const stockEntries = stockEntriesFromArticle(article);
+  const matchingStockEntry = stockEntries.find(
     (stockEntry) => stockEntry.storeNumber === storeNumber && stockEntry.quantity != null
   );
 
@@ -1560,11 +1731,31 @@ const currentEasyCashierQuantityForStore = ({ article, storeNumber, allowArticle
     return optionalNumberFromValue(matchingStockEntry.quantity);
   }
 
-  if (!allowArticleStockQuantity) {
-    return null;
+  const cachedQuantity = cachedEasyCashierQuantityForStore({
+    articleEndpoint,
+    product,
+    storeNumber,
+  });
+
+  if (cachedQuantity != null) {
+    return cachedQuantity;
   }
 
-  return stockQuantityFromArticle(article);
+  // EasyCashier can omit per-store rows until a location has been initialized.
+  // When the article already exposes store-specific stock entries, a missing
+  // row for the requested store should be treated as zero instead of blocking
+  // the sync.
+  if (stockEntries.some((stockEntry) => stockEntry.storeNumber != null)) {
+    return 0;
+  }
+
+  if (!allowArticleStockQuantity) {
+    return defaultQuantity;
+  }
+
+  const articleStockQuantity = stockQuantityFromArticle(article);
+
+  return articleStockQuantity != null ? articleStockQuantity : defaultQuantity;
 };
 
 const desiredStockLevelsForProduct = (product) => {
@@ -1625,7 +1816,7 @@ const stockChangeEndpointContext = ({ group }) => ({
   changeType: group.changeType,
 });
 
-const buildStockChangeMovements = ({ product, article }) => {
+const buildStockChangeMovements = ({ articleEndpoint, product, article, allowMissingCurrentStock = false }) => {
   const desiredStockLevels = desiredStockLevelsForProduct(product);
   const allowArticleStockQuantity = desiredStockLevels.length === 1;
   const requestArticleNumber = articleNumberFromProduct(product);
@@ -1633,9 +1824,12 @@ const buildStockChangeMovements = ({ product, article }) => {
   return desiredStockLevels
     .map((stockLevel) => {
       const currentQuantity = currentEasyCashierQuantityForStore({
+        articleEndpoint,
+        product,
         article,
         storeNumber: stockLevel.storeNumber,
         allowArticleStockQuantity,
+        defaultQuantity: allowMissingCurrentStock ? 0 : null,
       });
 
       if (currentQuantity == null || !Number.isFinite(Number(currentQuantity))) {
@@ -1736,7 +1930,14 @@ const sendStockChanges = async ({ articleEndpoint, movements, product, syncDetai
   }
 };
 
-const syncEasyCashierInventory = async ({ articleEndpoint, product, responseBody, syncDetails, logger }) => {
+const syncEasyCashierInventory = async ({
+  articleEndpoint,
+  product,
+  responseBody,
+  syncDetails,
+  logger,
+  allowMissingCurrentStock = false,
+}) => {
   const desiredStockLevels = desiredStockLevelsForProduct(product);
 
   if (desiredStockLevels.length === 0) {
@@ -1758,9 +1959,19 @@ const syncEasyCashierInventory = async ({ articleEndpoint, product, responseBody
     });
   }
 
-  const movements = buildStockChangeMovements({ product, article: easyCashierArticle });
+  const movements = buildStockChangeMovements({
+    articleEndpoint,
+    product,
+    article: easyCashierArticle,
+    allowMissingCurrentStock,
+  });
 
   if (movements.length === 0) {
+    cacheEasyCashierStockLevels({
+      articleEndpoint,
+      product,
+      stockLevels: desiredStockLevels,
+    });
     return 0;
   }
 
@@ -1769,6 +1980,12 @@ const syncEasyCashierInventory = async ({ articleEndpoint, product, responseBody
     movements,
     product,
     syncDetails,
+  });
+
+  cacheEasyCashierStockLevels({
+    articleEndpoint,
+    product,
+    stockLevels: desiredStockLevels,
   });
 
   return movements.length;
@@ -1794,7 +2011,41 @@ export const sendEasyCashierProductPayload = async ({
 
   try {
     const articleEndpoint = resolveEndpoint(endpoint);
-    let products = await productRowsForRequest({ endpointName, payload, connections });
+    let products;
+
+    try {
+      products = await productRowsForRequest({ endpointName, payload, connections });
+    } catch (error) {
+      const deletePayload =
+        endpointName !== "delete" && isShopifyProductNotFoundError(error)
+          ? deletePayloadFromShopifyProductPayload(payload)
+          : null;
+
+      if (!deletePayload) {
+        throw error;
+      }
+
+      logger.info(
+        {
+          endpointName,
+          event: payload?.event ?? null,
+          productId: payload?.shopifyProductId ?? null,
+        },
+        "Shopify product was missing during EasyCashier sync; falling back to EasyCashier delete by Shopify product id"
+      );
+
+      return await sendEasyCashierProductPayload({
+        api,
+        params: {
+          payload: deletePayload,
+        },
+        logger,
+        connections,
+        endpoint,
+        endpointName: "delete",
+        method: "DELETE",
+      });
+    }
 
     if (endpointName === "delete") {
       products = await expandDeleteProductsWithEasyCashierMatches({
@@ -1982,6 +2233,7 @@ export const sendEasyCashierProductPayload = async ({
           responseBody,
           syncDetails,
           logger,
+          allowMissingCurrentStock: requestEndpointName === "create",
         });
         requestDetails.inventoryMovementCount = inventoryMovementCount;
         syncDetails.inventoryMovementCount = (syncDetails.inventoryMovementCount ?? 0) + inventoryMovementCount;

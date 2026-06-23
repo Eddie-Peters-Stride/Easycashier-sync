@@ -60,6 +60,31 @@ describe("manageProduct helpers", () => {
     assert.equal(payload.products[0].inventoryQuantity, 5);
   });
 
+  test("buildShopifyProductEasyCashierPayload keeps product deletes usable without variants", () => {
+    const payload = buildShopifyProductEasyCashierPayload({
+      trigger: {
+        type: "shopify_webhook",
+        topic: "products/delete",
+        shopId: "shop-1",
+        shopDomain: "dragonslair.myshopify.com",
+        payload: {
+          id: 111,
+          title: "Deleted Product",
+        },
+      },
+      event: "deleted",
+    });
+
+    assert.equal(payload.event, "deleted");
+    assert.equal(payload.topic, "products/delete");
+    assert.equal(payload.shopId, "shop-1");
+    assert.equal(payload.shopDomain, "dragonslair.myshopify.com");
+    assert.equal(payload.shopifyProductId, "111");
+    assert.equal(payload.products.length, 1);
+    assert.equal(payload.products[0].shopifyProductId, "111");
+    assert.equal(payload.products[0].artikelnummer, null);
+  });
+
   test("shopifyProductUpdateNeedsSync returns true when only variants changed", () => {
     assert.equal(
       shopifyProductUpdateNeedsSync({

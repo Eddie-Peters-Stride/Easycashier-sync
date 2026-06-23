@@ -172,6 +172,14 @@ export function createApiStub({ cancelError = null } = {}) {
 
   return {
     api: {
+      createdProductSync: {
+        operationName: "createdProductSync",
+        functionName: "createdProductSync",
+      },
+      deletedProductSync: {
+        operationName: "deletedProductSync",
+        functionName: "deletedProductSync",
+      },
       syncAllProductsToEasyCashier: {
         operationName: "syncAllProductsToEasyCashier",
         functionName: "syncAllProductsToEasyCashier",
@@ -183,6 +191,10 @@ export function createApiStub({ cancelError = null } = {}) {
       syncEasyCashierProduct: {
         operationName: "syncEasyCashierProduct",
         functionName: "syncEasyCashierProduct",
+      },
+      updatedProductSync: {
+        operationName: "updatedProductSync",
+        functionName: "updatedProductSync",
       },
       handle: (action, id) => {
         handleCalls.push({

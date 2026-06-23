@@ -130,6 +130,20 @@ export const buildShopifyProductEasyCashierPayload = ({ trigger, event }) => {
   const variants = variantsFromWebhook(trigger);
   const productName = productNameForPayload(trigger);
   const shopifyProductId = productIdForPayload(trigger);
+  const products =
+    event === "deleted" && variants.length === 0
+      ? shopifyProductId == null
+        ? []
+        : [
+            {
+              shopifyProductId,
+              shopifyVariantId: null,
+              shopifyVariantGid: null,
+              artikelnummer: null,
+              produktnamn: productName,
+            },
+          ]
+      : buildRows(variants, productName, shopifyProductId);
 
   return {
     event,
@@ -139,7 +153,7 @@ export const buildShopifyProductEasyCashierPayload = ({ trigger, event }) => {
     shopifyProductId,
     shopifyProductGid: productGidForPayload(trigger),
     produktnamn: productName,
-    products: buildRows(variants, productName, shopifyProductId),
+    products,
   };
 };
 

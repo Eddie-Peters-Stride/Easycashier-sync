@@ -1,4 +1,4 @@
-import { ActionOptions } from "gadget-server";
+import { enqueueShopifyProductEasyCashierSync, isProductWebhookTrigger } from "../lib/manageProduct.js";
 import { sendEasyCashierProductPayload } from "../lib/easycashierApi.js";
 
 export const params = {
@@ -6,7 +6,21 @@ export const params = {
 };
 
 /** @type { GlobalActionRun } */
-export const run = async ({ params, logger, api, connections }) => {
+export const run = async ({ params, logger, api, connections, trigger }) => {
+  if (isProductWebhookTrigger(trigger)) {
+    await enqueueShopifyProductEasyCashierSync({
+      api,
+      logger,
+      trigger,
+      fallbackEvent: "deleted",
+    });
+
+    return {
+      success: true,
+      queued: true,
+    };
+  }
+
   return await sendEasyCashierProductPayload({
     api,
     params,
@@ -21,5 +35,10 @@ export const run = async ({ params, logger, api, connections }) => {
 /** @type { ActionOptions } */
 export const options = {
   timeoutMS: 900000,
-  triggers: { api: true },
+  triggers: {
+    api: true,
+    shopify: {
+      triggerKey: "shopifyproduct-delete",
+    },
+  },
 };
