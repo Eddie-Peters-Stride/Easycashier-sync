@@ -210,9 +210,10 @@ const normalizeEasyCashierStockLocationMapping = (mapping) => {
 
 
 // When more locations needs to be supported, add them to the EASYCASHIER_STOCK_LOCATION_MAPPINGS environment variable as a JSON array of objects with easyCashierStoreNumber and shopifyLocationName or shopifyLocationId properties, e.g.:
-// EASYCASHIER_STOCK_LOCATION_MAPPINGS='[{"easyCashierStoreNumber": 1, "shopifyLocationName": "Kungsholmstorg 8"}, {"easyCashierStoreNumber": 2, "shopifyLocationId": "gid://shopify/Location/123456789"}]'
+// EASYCASHIER_STOCK_LOCATION_MAPPINGS='[{"easyCashierStoreNumber": 1, "shopifyLocationName": "Kungsholmstorg 8"}, {"easyCashierStoreNumber": 3, "shopifyLocationName": "Sveavägen 118"}]'
 const DEFAULT_EASYCASHIER_STOCK_LOCATION_MAPPINGS = [
   { easyCashierStoreNumber: 1, shopifyLocationName: "Kungsholmstorg 8" },
+  { easyCashierStoreNumber: 3, shopifyLocationName: "Sveavägen 118" },
 ];
 
 const configuredEasyCashierStockLocationMappings = () => {
@@ -1078,9 +1079,9 @@ const articleLookupPagination = (json, lookupEndpoint) => {
       ? Number(paginationSource.page)
       : Number.isFinite(Number(paginationSource.pageNumber))
         ? Number(paginationSource.pageNumber)
-      : Number.isFinite(Number(paginationSource.currentPage))
-        ? Number(paginationSource.currentPage)
-        : numericQueryParamFromEndpoint(lookupEndpoint, ["pageNumber", "page", "currentPage"]);
+        : Number.isFinite(Number(paginationSource.currentPage))
+          ? Number(paginationSource.currentPage)
+          : numericQueryParamFromEndpoint(lookupEndpoint, ["pageNumber", "page", "currentPage"]);
   const totalPages = Number.isFinite(Number(paginationSource.totalPages)) ? Number(paginationSource.totalPages) : null;
   const usesOneBasedPageNumbers =
     Number.isFinite(Number(paginationSource.currentPage)) || Number.isFinite(Number(paginationSource.pageNumber));

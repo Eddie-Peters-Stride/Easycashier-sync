@@ -119,6 +119,7 @@ export const permissions: GadgetPermissions = {
       actions: {
         scheduledShopifySync: true,
         syncAllProductsToEasyCashier: true,
+        syncEasyCashierBulkProducts: true,
       },
     },
     unauthenticated: {

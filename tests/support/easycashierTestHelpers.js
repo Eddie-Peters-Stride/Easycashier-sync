@@ -230,7 +230,24 @@ export function makeShopifyProductGraphqlResponse({
   inventoryQuantity = 5,
   locationName = "Kungsholmstorg 8",
   locationAvailable = inventoryQuantity,
+  inventoryLevels = null,
 } = {}) {
+  const inventoryLevelNodes =
+    inventoryLevels ?? [
+      {
+        location: {
+          id: `gid://shopify/Location/${variantId}`,
+          name: locationName,
+        },
+        quantities: [
+          {
+            name: "available",
+            quantity: locationAvailable,
+          },
+        ],
+      },
+    ];
+
   return {
     data: {
       product: {
@@ -249,20 +266,7 @@ export function makeShopifyProductGraphqlResponse({
               inventoryQuantity,
               inventoryItem: {
                 inventoryLevels: {
-                  nodes: [
-                    {
-                      location: {
-                        id: `gid://shopify/Location/${variantId}`,
-                        name: locationName,
-                      },
-                      quantities: [
-                        {
-                          name: "available",
-                          quantity: locationAvailable,
-                        },
-                      ],
-                    },
-                  ],
+                  nodes: inventoryLevelNodes,
                 },
               },
             },
