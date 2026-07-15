@@ -27,11 +27,7 @@ const vatForTaxable = (taxable) => {
 };
 
 const rawWebhookPayload = (trigger) => {
-  if (trigger?.type !== "shopify_webhook") {
-    return null;
-  }
-
-  return trigger.payload ?? null;
+  return trigger?.payload ?? null;
 };
 
 export const isProductWebhookTrigger = (trigger) =>
@@ -214,6 +210,28 @@ export const enqueueShopifyProductEasyCashierPayload = async ({ api, logger, pay
 };
 
 export const enqueueShopifyProductEasyCashierSync = async ({ api, logger, trigger, record, fallbackEvent }) => {
+  if (fallbackEvent !== "deleted") {
+    const missingSkuVariantIds = await missingSkuVariantIdsForProductSync({
+      api,
+      trigger,
+      record,
+    });
+
+    if (missingSkuVariantIds.length > 0) {
+      logger.warn(
+        {
+          event: fallbackEvent,
+          topic: trigger?.topic ?? null,
+          shopId: record?.shopId ?? trigger?.shopId ?? null,
+          productId: record?.id ?? trigger?.payload?.id ?? null,
+          missingSkuVariantIds,
+        },
+        "Product can not be created without sku"
+      );
+      return;
+    }
+  }
+
   if (isProductWebhookTrigger(trigger)) {
     const payload = buildShopifyProductEasyCashierPayload({
       trigger,
@@ -302,6 +320,42 @@ const normalizeSkuValue = (sku) => {
   const normalizedSku = String(sku).trim();
 
   return normalizedSku === "" ? null : normalizedSku;
+};
+
+const missingSkuVariantIdsFromPayload = (payload) => {
+  if (!Array.isArray(payload?.variants)) {
+    return [];
+  }
+
+  return payload.variants
+    .filter((variant) => normalizeSkuValue(variant?.sku) == null)
+    .map((variant) => optionalVariantIdentifierFromProduct(variant) ?? (variant?.id == null ? null : String(variant.id)))
+    .filter((variantId) => variantId != null && variantId !== "");
+};
+
+const missingSkuVariantIdsForProductSync = async ({ api, trigger, record }) => {
+  const payloadVariantIds = missingSkuVariantIdsFromPayload(trigger?.payload);
+
+  if (payloadVariantIds.length > 0) {
+    return payloadVariantIds;
+  }
+
+  if (!record?.id || typeof api?.shopifyProductVariant?.findMany !== "function") {
+    return [];
+  }
+
+  const variants = await api.shopifyProductVariant.findMany({
+    filter: {
+      productId: {
+        equals: String(record.id),
+      },
+    },
+  });
+
+  return (Array.isArray(variants) ? variants : [])
+    .filter((variant) => normalizeSkuValue(variant?.sku) == null)
+    .map((variant) => (variant?.id == null ? null : String(variant.id)))
+    .filter((variantId) => variantId != null && variantId !== "");
 };
 
 const normalizeShopifyVariantForInventory = (variant, inventoryQuantity) => ({
@@ -588,6 +642,20 @@ export const enqueueShopifyProductVariantInventoryEasyCashierSync = async ({
   record,
   previousSku,
 }) => {
+  const currentSku = normalizeSkuValue(record?.sku);
+
+  if (!currentSku) {
+    logger.warn(
+      {
+        variantId: record?.id ?? null,
+        productId: record?.productId ?? null,
+        shopId: record?.shopId ?? trigger?.shopId ?? null,
+      },
+      "Product can not be created without sku"
+    );
+    return;
+  }
+
   const skuChangeQueued = await enqueueShopifyProductVariantSkuChangeEasyCashierSync({
     api,
     logger,
