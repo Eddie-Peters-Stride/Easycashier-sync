@@ -10,10 +10,10 @@ const configuredNumber = (envVarName, defaultValue) => {
 };
 
 export const EASYCASHIER_BULK_SYNC_QUEUE = {
-  // Bulk syncs can safely use a little parallelism without slowing down
-  // the real-time webhook queue.
+  // Each job performs many Shopify GraphQL requests. Serialize by default so
+  // Gadget's per-shop connection and rate-limit tracker are not contended.
   name: "easycashier-bulk-sync",
-  maxConcurrency: configuredNumber("EASYCASHIER_BULK_SYNC_QUEUE_CONCURRENCY", 4),
+  maxConcurrency: configuredNumber("EASYCASHIER_BULK_SYNC_QUEUE_CONCURRENCY", 1),
 };
 
 const abortErrorForSync = () => {

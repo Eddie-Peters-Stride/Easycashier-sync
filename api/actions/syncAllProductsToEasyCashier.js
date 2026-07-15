@@ -98,7 +98,13 @@ const startQueuedSync = async ({ api, logger, connections, shopId, signal }) => 
           id: `${syncRunId}:batch:${batchIndex}`,
           queue: EASYCASHIER_BULK_SYNC_QUEUE,
           shopifyShop: shopId,
-          retries: { retryCount: 1, initialInterval: 2000 },
+          retries: {
+            retryCount: 5,
+            initialInterval: 2000,
+            maxInterval: 60000,
+            backoffFactor: 2,
+            randomizeInterval: true,
+          },
         }
       );
 

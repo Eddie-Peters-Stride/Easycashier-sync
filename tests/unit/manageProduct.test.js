@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildShopifyProductEasyCashierPayload,
+  enqueueShopifyProductEasyCashierPayload,
   enqueueShopifyProductVariantDeleteEasyCashierSync,
   isProductWebhookTrigger,
   productEventForTrigger,
@@ -96,6 +97,28 @@ describe("manageProduct helpers", () => {
       }),
       true
     );
+  });
+
+  test("associates queued product syncs with the Shopify shop and resilient retries", async () => {
+    const { api, enqueueCalls } = createApiStub();
+    const { logger } = createLogger();
+
+    await enqueueShopifyProductEasyCashierPayload({
+      api,
+      logger,
+      payload: {
+        event: "updated",
+        shopId: "shop-1",
+        shopifyProductId: "111",
+        products: [],
+      },
+    });
+
+    assert.equal(enqueueCalls.length, 1);
+    assert.equal(enqueueCalls[0][2].shopifyShop, "shop-1");
+    assert.equal(enqueueCalls[0][2].queue.maxConcurrency, 1);
+    assert.equal(enqueueCalls[0][2].retries.retryCount, 5);
+    assert.equal(enqueueCalls[0][2].retries.randomizeInterval, true);
   });
 
   test("skips variant delete sync when the SKU is missing", async () => {

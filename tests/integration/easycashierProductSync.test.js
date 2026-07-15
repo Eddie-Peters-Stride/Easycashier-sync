@@ -804,6 +804,103 @@ describe("Shopify to Easycashier product sync", () => {
     );
   });
 
+  test("updatedProductSync recreates an article when its cached EasyCashier id no longer exists", async () => {
+    await runWithEasycashierHarness(
+      {
+        shopifyResponses: [
+          makeShopifyProductGraphqlResponse({
+            productId: 123,
+            variantId: 233,
+            sku: "STALE-CACHE-1",
+            inventoryQuantity: 4,
+            locationAvailable: 4,
+          }),
+          makeShopifyProductGraphqlResponse({
+            productId: 123,
+            variantId: 233,
+            sku: "STALE-CACHE-1",
+            inventoryQuantity: 4,
+            locationAvailable: 4,
+          }),
+          makeShopifyProductGraphqlResponse({
+            productId: 123,
+            variantId: 233,
+            sku: "STALE-CACHE-1",
+            inventoryQuantity: 4,
+            locationAvailable: 4,
+          }),
+        ],
+        fetchResponses: [
+          jsonResponse({
+            id: "ec-article-stale",
+            articleNumber: "STALE-CACHE-1",
+            stockQuantity: 4,
+          }),
+          jsonResponse({
+            id: "ec-article-stale",
+            articleNumber: "STALE-CACHE-1",
+            stockQuantity: 4,
+          }),
+          jsonResponse({
+            error: {
+              code: 404,
+              message: 'Article "ec-article-stale" does not exist',
+            },
+          }, 404),
+          jsonResponse({
+            id: "ec-article-recreated",
+            articleNumber: "STALE-CACHE-1",
+            stockQuantity: 4,
+          }, 201),
+          jsonResponse({
+            id: "ec-article-recreated",
+            articleNumber: "STALE-CACHE-1",
+            stockQuantity: 4,
+          }),
+        ],
+      },
+      async ({ api, logger, connections, fetchCalls, logEntries }) => {
+        const sendUpdate = () =>
+          sendEasyCashierProductPayload({
+            api,
+            params: {
+              payload: payloadFor({
+                productId: 123,
+                event: "updated",
+              }),
+            },
+            logger,
+            connections,
+            endpoint,
+            endpointName: "edit",
+            method: "PUT",
+          });
+
+        await sendUpdate();
+        const recoveredResult = await sendUpdate();
+        await sendUpdate();
+
+        assert.deepEqual(recoveredResult, {
+          success: true,
+          productCount: 1,
+        });
+
+        assert.equal(fetchCalls.length, 5);
+        assert.equal(fetchCalls[0].options.method, "GET");
+        assert.equal(fetchCalls[1].options.method, "PUT");
+        assert.equal(fetchCalls[1].url, `${articleEndpoint}/ec-article-stale`);
+        assert.equal(fetchCalls[2].options.method, "PUT");
+        assert.equal(fetchCalls[2].url, `${articleEndpoint}/ec-article-stale`);
+        assert.equal(fetchCalls[3].options.method, "POST");
+        assert.equal(fetchCalls[3].url, articleEndpoint);
+        assert.equal(fetchCalls[4].options.method, "PUT");
+        assert.equal(fetchCalls[4].url, `${articleEndpoint}/ec-article-recreated`);
+        assert.equal(logEntries.warn.length, 1);
+        assert.match(logEntries.warn[0][1], /retrying as create/i);
+      }
+    );
+  });
+
   test("updatedProductSync skips unresolved duplicate creates instead of failing the background action", async () => {
     await runWithEasycashierHarness(
       {

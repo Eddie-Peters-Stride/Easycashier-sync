@@ -1070,6 +1070,37 @@ const cacheEasyCashierArticleId = ({ articleEndpoint, product, article }) => {
   }
 };
 
+const invalidateEasyCashierArticleCaches = ({ articleEndpoint, product, staleArticleId }) => {
+  const lookupValues = easyCashierProductLookupCacheValues({ product });
+  const articleCacheKeys = new Set(
+    lookupValues.map((lookupValue) =>
+      easyCashierArticleIdCacheKey({
+        articleEndpoint,
+        ...lookupValue,
+      })
+    )
+  );
+  const stockCacheKeyPrefixes = lookupValues.map(
+    ({ fieldName, fieldValue }) =>
+      `${articleEndpoint}|stock|${fieldName}|${String(fieldValue).trim()}|`
+  );
+
+  for (const [cacheKey, entry] of easyCashierArticleIdCache.entries()) {
+    if (
+      articleCacheKeys.has(cacheKey) ||
+      (staleArticleId != null && String(entry?.easyCashierArticleId) === String(staleArticleId))
+    ) {
+      easyCashierArticleIdCache.delete(cacheKey);
+    }
+  }
+
+  for (const cacheKey of easyCashierStockQuantityCache.keys()) {
+    if (stockCacheKeyPrefixes.some((prefix) => cacheKey.startsWith(prefix))) {
+      easyCashierStockQuantityCache.delete(cacheKey);
+    }
+  }
+};
+
 const articleLookupValues = (article) =>
   [
     articleNumber(article),
@@ -2122,6 +2153,55 @@ export const sendEasyCashierProductPayload = async ({
       syncDetails.requests.push(requestDetails);
 
       const deleteAlreadyMissing = requestMethod === "DELETE" && response.status === 404;
+      const editArticleMissing = requestMethod === "PUT" && response.status === 404;
+
+      if (editArticleMissing) {
+        const staleArticleId = decodeURIComponent(resolvedEndpoint.split("/").pop() ?? "");
+
+        invalidateEasyCashierArticleCaches({
+          articleEndpoint,
+          product,
+          staleArticleId,
+        });
+
+        logger.warn(
+          {
+            endpointName: requestEndpointName,
+            originalEndpointName: endpointName,
+            status: response.status,
+            event: payload?.event,
+            productId: payload?.shopifyProductId,
+            articleNumber: requestArticleNumber,
+            staleArticleId,
+          },
+          "EasyCashier article resolved for update no longer exists; retrying as create"
+        );
+
+        const recoveryRequestDetails = {
+          requestedEndpointName: endpointName,
+          endpointName: "create",
+          method: "POST",
+          endpoint: articleEndpoint,
+          easycashierArticleNumber: requestArticleNumber,
+          sourceProduct: productDetailsForLog(product),
+          easycashierPayload: articlePayload,
+          recoveredFromMissingArticleId: staleArticleId,
+        };
+
+        response = await fetchEasyCashier(articleEndpoint, {
+          ...requestOptions,
+          method: "POST",
+        });
+        responseBody = await response.text();
+        recoveryRequestDetails.responseStatus = response.status;
+        recoveryRequestDetails.responseBody = textForLog(responseBody);
+        syncDetails.requests.push(recoveryRequestDetails);
+
+        requestMethod = "POST";
+        requestEndpointName = "create";
+        resolvedEndpoint = articleEndpoint;
+        requestDetails.recoveredMissingEditAsCreate = true;
+      }
 
       const duplicateArticleInfo = createDuplicateArticleInfo({
         requestEndpointName,
@@ -2417,10 +2497,21 @@ const configuredBulkImportStoreNumbers = () => {
 const isMissingShopifySkuError = (error) =>
   errorMessageForLog(error).includes("Missing Shopify SKU in EasyCashier product payload");
 
-const isShopifyNetworkError = (error) => {
+export const isShopifyNetworkError = (error) => {
   const message = errorMessageForLog(error);
 
-  return error?.name === "CombinedError" || message.includes("[Network]") || message.includes("Bad Gateway");
+  return (
+    error?.name === "CombinedError" ||
+    error?.name === "RequestError" ||
+    error?.name === "TimeoutError" ||
+    error?.code === "ETIMEDOUT" ||
+    error?.code === "ECONNRESET" ||
+    error?.code === "ECONNREFUSED" ||
+    message.includes("[Network]") ||
+    message.includes("Bad Gateway") ||
+    message.includes("failed to update shopify rate limit") ||
+    message.includes("Timeout awaiting 'request'")
+  );
 };
 
 export const sendEasyCashierBulkProductImport = async ({
@@ -2528,9 +2619,8 @@ export const sendEasyCashierBulkProductImport = async ({
       articleRows.push(...productArticleRows);
       successProductIds.push(productId);
     } catch (error) {
-      failedProductIds.push(productId);
-
       if (isMissingShopifySkuError(error)) {
+        failedProductIds.push(productId);
         logger.warn(
           {
             shopId,
@@ -2545,6 +2635,24 @@ export const sendEasyCashierBulkProductImport = async ({
         continue;
       }
 
+      if (isShopifyNetworkError(error)) {
+        logger.error(
+          {
+            error,
+            shopId,
+            ...batchProgress,
+            productId,
+            errorMessage: errorMessageForLog(error),
+          },
+          batchLabel
+            ? `Transient Shopify failure while fetching product rows; retrying EasyCashier bulk import (${batchLabel})`
+            : "Transient Shopify failure while fetching product rows; retrying EasyCashier bulk import"
+        );
+        throw error;
+      }
+
+      failedProductIds.push(productId);
+
       logger.error(
         {
           error,
@@ -2553,13 +2661,9 @@ export const sendEasyCashierBulkProductImport = async ({
           productId,
           errorMessage: errorMessageForLog(error),
         },
-        isShopifyNetworkError(error)
-          ? batchLabel
-            ? `Failed to fetch Shopify product rows for EasyCashier bulk import (${batchLabel})`
-            : "Failed to fetch Shopify product rows for EasyCashier bulk import"
-          : batchLabel
-            ? `Failed to prepare Shopify product rows for EasyCashier bulk import (${batchLabel})`
-            : "Failed to prepare Shopify product rows for EasyCashier bulk import"
+        batchLabel
+          ? `Failed to prepare Shopify product rows for EasyCashier bulk import (${batchLabel})`
+          : "Failed to prepare Shopify product rows for EasyCashier bulk import"
       );
     }
   }

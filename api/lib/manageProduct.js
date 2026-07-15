@@ -196,7 +196,16 @@ export const enqueueShopifyProductEasyCashierPayload = async ({ api, logger, pay
     // EasyCashier rate limiting is enforced in the sender, so all sync jobs
     // must share a single queue to keep that guard global.
     queue: EASYCASHIER_SYNC_QUEUE,
-    retries: { retryCount: 1, initialInterval: 2000 },
+    // Associating the job with its shop lets Gadget coordinate Shopify API
+    // usage and rate-limit state for background work.
+    shopifyShop: payload.shopId,
+    retries: {
+      retryCount: 5,
+      initialInterval: 2000,
+      maxInterval: 60000,
+      backoffFactor: 2,
+      randomizeInterval: true,
+    },
   });
 
   logger.info(
