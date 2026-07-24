@@ -131,14 +131,14 @@ export const buildShopifyProductEasyCashierPayload = ({ trigger, event }) => {
       ? shopifyProductId == null
         ? []
         : [
-            {
-              shopifyProductId,
-              shopifyVariantId: null,
-              shopifyVariantGid: null,
-              artikelnummer: null,
-              produktnamn: productName,
-            },
-          ]
+          {
+            shopifyProductId,
+            shopifyVariantId: null,
+            shopifyVariantGid: null,
+            artikelnummer: null,
+            produktnamn: productName,
+          },
+        ]
       : buildRows(variants, productName, shopifyProductId);
 
   return {
@@ -196,7 +196,16 @@ export const enqueueShopifyProductEasyCashierPayload = async ({ api, logger, pay
     // EasyCashier rate limiting is enforced in the sender, so all sync jobs
     // must share a single queue to keep that guard global.
     queue: EASYCASHIER_SYNC_QUEUE,
-    retries: { retryCount: 1, initialInterval: 2000 },
+    // Associating the job with its shop lets Gadget coordinate Shopify API
+    // usage and rate-limit state for background work.
+    shopifyShop: payload.shopId,
+    retries: {
+      retryCount: 5,
+      initialInterval: 2000,
+      maxInterval: 60000,
+      backoffFactor: 2,
+      randomizeInterval: true,
+    },
   });
 
   logger.info(
@@ -322,6 +331,17 @@ const normalizeSkuValue = (sku) => {
   return normalizedSku === "" ? null : normalizedSku;
 };
 
+const variantIdentifierFromPayload = (variant) => {
+  const identifier =
+    variant?.shopifyVariantId ??
+    idFromGid(variant?.shopifyVariantGid) ??
+    idFromGid(variant?.admin_graphql_api_id) ??
+    variant?.legacyResourceId ??
+    variant?.id;
+
+  return identifier == null || identifier === "" ? null : String(identifier);
+};
+
 const missingSkuVariantIdsFromPayload = (payload) => {
   if (!Array.isArray(payload?.variants)) {
     return [];
@@ -329,7 +349,7 @@ const missingSkuVariantIdsFromPayload = (payload) => {
 
   return payload.variants
     .filter((variant) => normalizeSkuValue(variant?.sku) == null)
-    .map((variant) => optionalVariantIdentifierFromProduct(variant) ?? (variant?.id == null ? null : String(variant.id)))
+    .map(variantIdentifierFromPayload)
     .filter((variantId) => variantId != null && variantId !== "");
 };
 
@@ -369,8 +389,48 @@ const normalizeShopifyVariantForInventory = (variant, inventoryQuantity) => ({
   inventoryByLocation: normalizeInventoryLevels(variant?.inventoryItem?.inventoryLevels?.nodes),
 });
 
+const inventoryLevelsWithWebhookQuantity = ({ inventoryLevels, trigger, inventoryQuantity }) => {
+  const webhookLocationId = trigger?.payload?.location_id ?? trigger?.payload?.locationId ?? null;
+
+  if (webhookLocationId == null || inventoryQuantity == null) {
+    return inventoryLevels;
+  }
+
+  const normalizedLocationId = String(webhookLocationId);
+  let matchedLocation = false;
+  const mergedLevels = inventoryLevels.map((inventoryLevel) => {
+    if (String(inventoryLevel?.locationId ?? "") !== normalizedLocationId) {
+      return inventoryLevel;
+    }
+
+    matchedLocation = true;
+    return {
+      ...inventoryLevel,
+      // The webhook is the event source and can be newer than the immediately
+      // following Shopify GraphQL lookup.
+      available: inventoryQuantity,
+    };
+  });
+
+  if (!matchedLocation) {
+    mergedLevels.push({
+      locationId: normalizedLocationId,
+      locationGid: graphqlGid("Location", normalizedLocationId),
+      locationName: null,
+      available: inventoryQuantity,
+    });
+  }
+
+  return mergedLevels;
+};
+
 const buildInventoryWebhookPayload = ({ trigger, product, variant, inventoryQuantity }) => {
   const normalizedVariant = normalizeShopifyVariantForInventory(variant, inventoryQuantity);
+  normalizedVariant.inventoryByLocation = inventoryLevelsWithWebhookQuantity({
+    inventoryLevels: normalizedVariant.inventoryByLocation,
+    trigger,
+    inventoryQuantity,
+  });
   const productName = product?.title ?? null;
   const shopifyProductId = product?.legacyResourceId == null ? idFromGid(product?.id) : String(product.legacyResourceId);
 
@@ -474,7 +534,6 @@ export const enqueueShopifyInventoryLevelEasyCashierSync = async ({ api, logger,
     trigger,
     inventoryItemGid,
   });
-
   const easyCashierPayload = buildInventoryWebhookPayload({
     trigger,
     product,

@@ -6,7 +6,12 @@ import type { GadgetModel } from "gadget-server";
 export const schema: GadgetModel = {
   type: "gadget/model-schema/v2",
   storageKey: "DataModel-Shopify-ProductVariant",
-  fields: {},
+  fields: {
+    easyCashierInventorySyncState: {
+      type: "json",
+      storageKey: "3PRDSeuim9uq",
+    },
+  },
   shopify: {
     fields: {
       barcode: { searchIndex: false },

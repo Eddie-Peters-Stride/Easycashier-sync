@@ -73,6 +73,10 @@ describe("syncAllProductsToEasyCashier", () => {
         );
         assert.equal(result.batchBackgroundActionIds.length, 1);
         assert.match(result.batchBackgroundActionIds[0], /:batch:0$/);
+        assert.equal(enqueueCalls[0][2].shopifyShop, "shop-1");
+        assert.equal(enqueueCalls[0][2].queue.maxConcurrency, 1);
+        assert.equal(enqueueCalls[0][2].retries.retryCount, 5);
+        assert.equal(enqueueCalls[0][2].retries.randomizeInterval, true);
       }
     );
   });
@@ -85,6 +89,7 @@ describe("syncAllProductsToEasyCashier", () => {
             productId: 111,
             variantId: 222,
             sku: "SKU-1",
+            barcode: "0123456789012",
             inventoryQuantity: 5,
             locationAvailable: 5,
           }),
@@ -92,6 +97,7 @@ describe("syncAllProductsToEasyCashier", () => {
             productId: 112,
             variantId: 223,
             sku: "SKU-2",
+            barcode: "0098765432105",
             inventoryQuantity: 3,
             locationAvailable: 3,
           }),
@@ -142,6 +148,8 @@ describe("syncAllProductsToEasyCashier", () => {
         assert.equal(csvLines.length, 3);
         assert.ok(csvLines[1].includes("SKU-1"));
         assert.ok(csvLines[2].includes("SKU-2"));
+        assert.equal(csvLines[1].split(",")[6], "0123456789012");
+        assert.equal(csvLines[2].split(",")[6], "0098765432105");
 
       }
     );
@@ -200,7 +208,7 @@ describe("syncAllProductsToEasyCashier", () => {
     );
   });
 
-  test("logs Shopify gateway failures as product fetch failures during bulk sync", async () => {
+  test("rethrows transient Shopify failures so Gadget retries the bulk sync", async () => {
     await runWithEasycashierHarness(
       {
         shopifyResponses: [
@@ -212,30 +220,54 @@ describe("syncAllProductsToEasyCashier", () => {
         ],
       },
       async ({ api, logger, connections, fetchCalls, logEntries }) => {
-        const result = await runSyncEasyCashierBulkProducts({
-          params: {
-            payload: { shopId: "shop-1", productIds: ["115"] },
-          },
-          logger,
-          api,
-          connections,
-        });
-
-        assert.deepEqual(result, {
-          shopId: "shop-1",
-          productIds: ["115"],
-          batchNumber: null,
-          batchCount: null,
-          status: "skipped",
-          success: false,
-          importedProductCount: 0,
-          failedProductCount: 1,
-          importedRowCount: 0,
-        });
+        await assert.rejects(
+          runSyncEasyCashierBulkProducts({
+            params: {
+              payload: { shopId: "shop-1", productIds: ["115"] },
+            },
+            logger,
+            api,
+            connections,
+          }),
+          /Bad Gateway/
+        );
 
         assert.equal(fetchCalls.length, 0);
         assert.equal(logEntries.error.length, 1);
-        assert.match(logEntries.error[0][1], /Failed to fetch Shopify product rows/i);
+        assert.match(logEntries.error[0][1], /Transient Shopify failure/i);
+      }
+    );
+  });
+
+  test("rethrows Gadget Shopify rate-limit tracker timeouts for background retry", async () => {
+    await runWithEasycashierHarness(
+      {
+        shopifyResponses: [
+          () => {
+            const error = Object.assign(new Error("failed to update shopify rate limit: Timeout awaiting 'request' for 5000ms"), {
+              name: "RequestError",
+              code: "ETIMEDOUT",
+            });
+            throw error;
+          },
+        ],
+      },
+      async ({ api, logger, connections, fetchCalls, logEntries }) => {
+        await assert.rejects(
+          runSyncEasyCashierBulkProducts({
+            params: {
+              payload: { shopId: "shop-1", productIds: ["116"] },
+            },
+            logger,
+            api,
+            connections,
+          }),
+          /failed to update shopify rate limit/
+        );
+
+        assert.equal(fetchCalls.length, 0);
+        assert.equal(logEntries.error.length, 1);
+        assert.match(logEntries.error[0][1], /retrying EasyCashier bulk import/i);
       }
     );
   });

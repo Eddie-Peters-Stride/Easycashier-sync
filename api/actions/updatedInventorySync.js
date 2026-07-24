@@ -1,8 +1,20 @@
 import { ActionOptions } from "gadget-server";
 import { enqueueShopifyInventoryLevelEasyCashierSync } from "../lib/manageProduct.js";
+import { shopifyInventorySyncToEasyCashierEnabled } from "../lib/easycashierApi.js";
 
 /** @type { GlobalActionRun } */
 export const run = async ({ logger, api, connections, trigger }) => {
+  if (!shopifyInventorySyncToEasyCashierEnabled()) {
+    logger.info(
+      {
+        inventoryItemId: trigger?.payload?.inventory_item_id ?? null,
+        locationId: trigger?.payload?.location_id ?? null,
+      },
+      "Skipped Shopify inventory sync because it is disabled by configuration"
+    );
+    return { success: true, skipped: true };
+  }
+
   await enqueueShopifyInventoryLevelEasyCashierSync({
     api,
     logger,
@@ -10,7 +22,7 @@ export const run = async ({ logger, api, connections, trigger }) => {
     trigger,
   });
 
-  return { success: true };
+  return { success: true, skipped: false };
 };
 
 /** @type { ActionOptions } */
