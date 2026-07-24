@@ -2,6 +2,7 @@ const DEFAULT_TEST_ENV = {
   EASYCASHIER_API_BASE_URL: "https://easycashier.example",
   EASYCASHIER_COMPANY_ID: "123",
   EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE: "60000000",
+  EASYCASHIER_SYNC_INVENTORY_FROM_SHOPIFY: "true",
   EASYCASHIER_STOCK_LOCATION_MAPPINGS: JSON.stringify([
     {
       easyCashierStoreNumber: 1,
@@ -169,9 +170,24 @@ export function createApiStub({ cancelError = null } = {}) {
   const enqueueCalls = [];
   const handleCalls = [];
   const cancelCalls = [];
+  const variantStates = new Map();
 
   return {
     api: {
+      internal: {
+        shopifyProductVariant: {
+          update: async (id, values) => {
+            variantStates.set(String(id), cloneValue(values.easyCashierInventorySyncState ?? null));
+            return { id: String(id), ...cloneValue(values) };
+          },
+        },
+      },
+      shopifyProductVariant: {
+        findOne: async (id) => ({
+          id: String(id),
+          easyCashierInventorySyncState: cloneValue(variantStates.get(String(id)) ?? null),
+        }),
+      },
       createdProductSync: {
         operationName: "createdProductSync",
         functionName: "createdProductSync",
@@ -228,6 +244,7 @@ export function createApiStub({ cancelError = null } = {}) {
     enqueueCalls,
     handleCalls,
     cancelCalls,
+    variantStates,
   };
 }
 
@@ -318,7 +335,7 @@ export function createEasycashierHarness({
   const restoreTimers = installImmediateTimers();
   const fetchQueue = createFetchQueue(fetchResponses);
   const shopify = createShopifyConnection(shopifyResponses);
-  const { api, enqueueCalls, handleCalls, cancelCalls } = createApiStub({ cancelError });
+  const { api, enqueueCalls, handleCalls, cancelCalls, variantStates } = createApiStub({ cancelError });
   const { logger, entries } = createLogger();
 
   return {
@@ -328,6 +345,7 @@ export function createEasycashierHarness({
     enqueueCalls,
     handleCalls,
     cancelCalls,
+    variantStates,
     fetchCalls: fetchQueue.calls,
     shopifyCalls: shopify.calls,
     connections: {

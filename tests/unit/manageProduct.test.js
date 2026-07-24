@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   buildShopifyProductEasyCashierPayload,
   enqueueShopifyProductEasyCashierPayload,
+  enqueueShopifyProductEasyCashierSync,
+  enqueueShopifyInventoryLevelEasyCashierSync,
   enqueueShopifyProductVariantDeleteEasyCashierSync,
   isProductWebhookTrigger,
   productEventForTrigger,
@@ -59,6 +61,38 @@ describe("manageProduct helpers", () => {
     assert.equal(payload.products[0].shopifyVariantId, "222");
     assert.equal(payload.products[0].artikelnummer, null);
     assert.equal(payload.products[0].inventoryQuantity, 5);
+  });
+
+  test("skips a product webhook with a missing SKU without crashing", async () => {
+    const { api, enqueueCalls } = createApiStub();
+    const { logger, entries } = createLogger();
+
+    await enqueueShopifyProductEasyCashierSync({
+      api,
+      logger,
+      fallbackEvent: "created",
+      trigger: {
+        type: "shopify_webhook",
+        topic: "products/update",
+        shopId: "101583159644",
+        payload: {
+          id: "15678946869596",
+          title: "Pokémon TCG - Ninja Spinner Booster Japansk (Copy)",
+          variants: [
+            {
+              id: "58295968203100",
+              admin_graphql_api_id: "gid://shopify/ProductVariant/58295968203100",
+              inventory_quantity: "0",
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(enqueueCalls.length, 0);
+    assert.equal(entries.warn.length, 1);
+    assert.deepEqual(entries.warn[0][0].missingSkuVariantIds, ["58295968203100"]);
+    assert.match(entries.warn[0][1], /can not be created without sku/i);
   });
 
   test("buildShopifyProductEasyCashierPayload keeps product deletes usable without variants", () => {
@@ -149,4 +183,69 @@ describe("manageProduct helpers", () => {
     assert.equal(entries.warn.length, 1);
     assert.match(entries.warn[0][1], /variant delete because the Shopify variant SKU was missing/i);
   });
+
+  test("uses the inventory webhook quantity when Shopify location GraphQL data is stale", async () => {
+    const { api, enqueueCalls } = createApiStub();
+    const { logger } = createLogger();
+    const trigger = {
+      type: "shopify_webhook",
+      topic: "inventory_levels/update",
+      shopId: "shop-1",
+      payload: {
+        inventory_item_id: "333",
+        location_id: "444",
+        available: 7,
+      },
+    };
+    const connections = {
+      shopify: {
+        current: {
+          graphql: async () => ({
+            data: {
+              inventoryItem: {
+                id: "gid://shopify/InventoryItem/333",
+                sku: "RAILROAD-TILES",
+                variant: {
+                  id: "gid://shopify/ProductVariant/222",
+                  legacyResourceId: 222,
+                  sku: "RAILROAD-TILES",
+                  inventoryQuantity: 12,
+                  inventoryItem: {
+                    inventoryLevels: {
+                      nodes: [
+                        {
+                          location: {
+                            id: "gid://shopify/Location/444",
+                            name: "Store",
+                          },
+                          quantities: [{ name: "available", quantity: 8 }],
+                        },
+                      ],
+                    },
+                  },
+                  product: {
+                    id: "gid://shopify/Product/111",
+                    legacyResourceId: 111,
+                    title: "Railroad tiles",
+                  },
+                },
+              },
+            },
+          }),
+        },
+      },
+    };
+
+    await enqueueShopifyInventoryLevelEasyCashierSync({
+      api,
+      logger,
+      connections,
+      trigger,
+    });
+
+    assert.equal(enqueueCalls.length, 1);
+    assert.equal(enqueueCalls[0][1].payload.products[0].inventoryByLocation[0].available, 7);
+    assert.equal(enqueueCalls[0][1].payload.products[0].inventoryByLocation[0].locationId, "444");
+  });
+
 });

@@ -89,6 +89,7 @@ describe("syncAllProductsToEasyCashier", () => {
             productId: 111,
             variantId: 222,
             sku: "SKU-1",
+            barcode: "0123456789012",
             inventoryQuantity: 5,
             locationAvailable: 5,
           }),
@@ -96,6 +97,7 @@ describe("syncAllProductsToEasyCashier", () => {
             productId: 112,
             variantId: 223,
             sku: "SKU-2",
+            barcode: "0098765432105",
             inventoryQuantity: 3,
             locationAvailable: 3,
           }),
@@ -146,6 +148,8 @@ describe("syncAllProductsToEasyCashier", () => {
         assert.equal(csvLines.length, 3);
         assert.ok(csvLines[1].includes("SKU-1"));
         assert.ok(csvLines[2].includes("SKU-2"));
+        assert.equal(csvLines[1].split(",")[6], "0123456789012");
+        assert.equal(csvLines[2].split(",")[6], "0098765432105");
 
       }
     );

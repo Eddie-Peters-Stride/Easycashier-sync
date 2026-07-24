@@ -27,6 +27,7 @@ describe("Shopify to Easycashier product sync", () => {
             productId: 111,
             variantId: 222,
             sku: "SKU-1",
+            barcode: "0123456789012",
             inventoryQuantity: 5,
             locationAvailable: 5,
           }),
@@ -79,6 +80,7 @@ describe("Shopify to Easycashier product sync", () => {
 
         const createdArticle = JSON.parse(fetchCalls[1].options.body);
         assert.equal(createdArticle.articleNumber, "SKU-1");
+        assert.equal(createdArticle.barcode, "0123456789012");
         assert.equal(createdArticle.stockItem, true);
         assert.equal(createdArticle.description, "Test Product");
 

@@ -6,8 +6,8 @@
   "private": true,
   "scripts": {
     "build": "NODE_ENV=production react-router build",
-    "test": "node --experimental-default-type=module --test --test-concurrency=1 tests/unit/manageProduct.test.js tests/unit/easycashierRateLimit.test.js tests/integration/easycashierProductSync.test.js tests/integration/syncAllProductsToEasyCashier.test.js",
-    "test:integration": "node --experimental-default-type=module --test --test-concurrency=1 tests/integration/easycashierProductSync.test.js tests/integration/syncAllProductsToEasyCashier.test.js",
+    "test": "node --experimental-default-type=module --test --test-concurrency=1 tests/unit/manageProduct.test.js tests/unit/easycashierRateLimit.test.js tests/integration/easycashierInventoryLocationSync.test.js tests/integration/easycashierProductSync.test.js tests/integration/syncAllProductsToEasyCashier.test.js",
+    "test:integration": "node --experimental-default-type=module --test --test-concurrency=1 tests/integration/easycashierInventoryLocationSync.test.js tests/integration/easycashierProductSync.test.js tests/integration/syncAllProductsToEasyCashier.test.js",
     "test:unit": "node --experimental-default-type=module --test --test-concurrency=1 tests/unit/manageProduct.test.js tests/unit/easycashierRateLimit.test.js",
     "shopify": "shopify",
     "shopify:config:use:development": "shopify app config use shopify.app.development.toml",
