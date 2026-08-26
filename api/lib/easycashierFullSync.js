@@ -1,5 +1,9 @@
 const SHOPIFY_PRODUCT_PAGE_SIZE = 250;
 export const EASYCASHIER_SYNC_BATCH_SIZE = 250;
+// Product variants are read directly with only the configured inventory
+// locations. 100 keeps nested GraphQL query cost comfortably below Shopify's
+// single-query ceiling while reducing a 10k catalog to about 100 reads.
+export const EASYCASHIER_INVENTORY_PAGE_SIZE = 100;
 const EASYCASHIER_SYNC_QUEUE = { name: "easycashier-sync", maxConcurrency: 1 };
 
 const configuredNumber = (envVarName, defaultValue) => {
@@ -14,6 +18,14 @@ export const EASYCASHIER_BULK_SYNC_QUEUE = {
   // Gadget's per-shop connection and rate-limit tracker are not contended.
   name: "easycashier-bulk-sync",
   maxConcurrency: configuredNumber("EASYCASHIER_BULK_SYNC_QUEUE_CONCURRENCY", 1),
+};
+
+export const EASYCASHIER_INVENTORY_SYNC_QUEUE = {
+  // Inventory pages contain nested inventory-level connections and also write
+  // to EasyCashier. Keep one page in flight per app by default so both APIs'
+  // rate limits are respected and page ordering remains deterministic.
+  name: "easycashier-inventory-sync",
+  maxConcurrency: configuredNumber("EASYCASHIER_INVENTORY_SYNC_QUEUE_CONCURRENCY", 1),
 };
 
 const abortErrorForSync = () => {

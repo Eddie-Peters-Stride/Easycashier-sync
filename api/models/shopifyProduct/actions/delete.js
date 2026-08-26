@@ -21,16 +21,21 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     return;
   }
 
-  await enqueueShopifyProductEasyCashierSync({
+ await enqueueShopifyProductEasyCashierSync({
     api,
     logger,
     trigger,
     record,
     fallbackEvent: "deleted",
-  });
+  }); 
 };
 
 /** @type { ActionOptions } */
 export const options = {
   actionType: "delete",
+  triggers: {
+    shopify: {
+      triggerKey: "shopifyproduct-delete",
+    },
+  },
 };

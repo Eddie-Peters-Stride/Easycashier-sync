@@ -1,6 +1,7 @@
 import {
   isDuplicateEasyCashierInventorySync,
   recordCompletedEasyCashierInventorySync,
+  recordCompletedEasyCashierInventorySyncBatch,
 } from "./inventorySyncGuard.js";
 
 const authHeaders = ({ contentType = "application/json" } = {}) => {
@@ -68,8 +69,6 @@ const textForLog = (value, maxLength = 2000) => {
 
 const errorMessageForLog = (error) => error?.message ?? String(error);
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export const configuredEasyCashierRequestsPerMinute = () => {
   const rawValue = process.env.EASYCASHIER_RATE_LIMIT_REQUESTS_PER_MINUTE;
   const parsedValue =
@@ -106,49 +105,9 @@ const configuredEasyCashierArticleIdCacheTtlMs = () => {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : DEFAULT_EASYCASHIER_ARTICLE_ID_CACHE_TTL_MS;
 };
 
-const easyCashierRequestIntervalMs = () =>
-  Math.ceil(60000 / configuredEasyCashierRequestsPerMinute());
-
-const retryAfterDelayMs = (response, attemptNumber) => {
-  const retryAfterHeader = response.headers.get("retry-after");
-
-  if (retryAfterHeader) {
-    const retryAfterSeconds = Number.parseFloat(retryAfterHeader);
-
-    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-      return Math.ceil(retryAfterSeconds * 1000);
-    }
-
-    const retryAfterDateMs = Date.parse(retryAfterHeader);
-
-    if (Number.isFinite(retryAfterDateMs)) {
-      const delayMs = retryAfterDateMs - Date.now();
-
-      if (delayMs > 0) {
-        return delayMs;
-      }
-    }
-  }
-
-  return configuredEasyCashierRateLimitRetryBaseMs() * Math.max(1, 2 ** (attemptNumber - 1));
-};
 
 const fetchEasyCashier = async (url, options) => {
-  const maxRetryCount = configuredEasyCashierRateLimitRetryCount();
-
-  for (let attemptNumber = 0; ; attemptNumber += 1) {
-    // Pausing before each request smooths out bursts, but concurrent queues
-    // can still overlap, so we also retry 429s below.
-    await sleep(easyCashierRequestIntervalMs());
-
-    const response = await fetch(url, options);
-
-    if (response.status !== 429 || attemptNumber >= maxRetryCount) {
-      return response;
-    }
-
-    await sleep(retryAfterDelayMs(response, attemptNumber + 1));
-  }
+  return await fetch(url, options);
 };
 
 const resolveEndpoint = (endpoint) => {
@@ -244,7 +203,7 @@ const DEFAULT_EASYCASHIER_STOCK_LOCATION_MAPPINGS = [
   { easyCashierStoreNumber: 3, shopifyLocationName: "Sveavägen 118" },
 ];
 
-const configuredEasyCashierStockLocationMappings = () => {
+export const configuredEasyCashierStockLocationMappings = () => {
   const rawMappings = process.env.EASYCASHIER_STOCK_LOCATION_MAPPINGS;
   let mappings = DEFAULT_EASYCASHIER_STOCK_LOCATION_MAPPINGS;
 
@@ -444,7 +403,7 @@ const isShopifyProductNotFoundError = (error) =>
   error?.code === SHOPIFY_PRODUCT_NOT_FOUND_CODE ||
   /Shopify product .* was not found/i.test(error?.message ?? "");
 
-const fetchFreshShopifyProductRows = async ({ connections, payload }) => {
+export const fetchFreshShopifyProductRows = async ({ connections, payload }) => {
   const productGid = productGidFromPayload(payload);
 
   if (!productGid) {
@@ -1506,6 +1465,36 @@ const resolveEasyCashierArticle = async ({ articleEndpoint, articleNumbers, logg
   return articles[0];
 };
 
+const resolveEasyCashierArticleWithStock = async ({ articleEndpoint, product, logger }) => {
+  const articleNumbers = articleNumbersForLookup(product);
+  const article = await resolveEasyCashierArticle({
+    articleEndpoint,
+    articleNumbers,
+    logger,
+    includeQueryLookups: true,
+  });
+
+  if (articleHasStockData(article) || articleId(article) == null) {
+    return article;
+  }
+
+  const detailEndpoint = `${articleEndpoint}/${encodeURIComponent(articleId(article))}`;
+  const response = await fetchEasyCashier(detailEndpoint, {
+    method: "GET",
+    headers: authHeaders(),
+  });
+  const responseBody = await parseJsonResponse(response);
+
+  if (!response.ok) {
+    throw new Error(`EasyCashier article detail lookup failed with status ${response.status}`);
+  }
+
+  return articleFromResponseJson({
+    json: responseBody.json,
+    articleNumbers,
+  }) ?? articleRecordsFromResponse(responseBody.json)[0] ?? article;
+};
+
 const resolveKnownEasyCashierArticleId = ({ product }) => {
   const explicitArticleId = product?.easycashierArticleId ?? null;
 
@@ -1888,7 +1877,7 @@ const stockChangeEndpointContext = ({ group }) => ({
   changeType: group.changeType,
 });
 
-const buildStockChangeMovements = ({ articleEndpoint, product, article, allowMissingCurrentStock = false }) => {
+const buildStockChangeMovements = ({ articleEndpoint, product, article }) => {
   const desiredStockLevels = desiredStockLevelsForProduct(product);
   const allowArticleStockQuantity = desiredStockLevels.length === 1;
   const requestArticleNumber = articleNumberFromProduct(product);
@@ -1903,10 +1892,8 @@ const buildStockChangeMovements = ({ articleEndpoint, product, article, allowMis
         allowArticleStockQuantity,
         defaultQuantity: null,
       });
-      const currentQuantityWasAssumed =
-        (resolvedCurrentQuantity == null || !Number.isFinite(Number(resolvedCurrentQuantity))) &&
-        allowMissingCurrentStock;
-      const currentQuantity = currentQuantityWasAssumed ? 0 : resolvedCurrentQuantity;
+      const currentQuantityWasAssumed = resolvedCurrentQuantity == null;
+      const currentQuantity = resolvedCurrentQuantity ?? 0;
 
       if (currentQuantity == null || !Number.isFinite(Number(currentQuantity))) {
         throw new Error(
@@ -1928,6 +1915,7 @@ const buildStockChangeMovements = ({ articleEndpoint, product, article, allowMis
         shopifyProductId: product?.shopifyProductId ?? null,
         shopifyVariantId: product?.shopifyVariantId ?? idFromGid(product?.shopifyVariantGid) ?? null,
         shopifyLocationId: stockLevel.shopifyLocationId,
+        productName: product?.produktnamn ?? product?.title ?? product?.description ?? null,
       };
     })
     .filter((movement) => stockQuantityChanged(movement.delta));
@@ -1966,7 +1954,8 @@ const buildStockChangePayload = ({ group }) => ({
 const inventoryChangesForLog = ({ group, product }) =>
   group.movements.map((movement) => ({
     articleNumber: movement.articleNumber,
-    productName: product?.produktnamn ?? product?.title ?? product?.description ?? null,
+    productName:
+      movement.productName ?? product?.produktnamn ?? product?.title ?? product?.description ?? null,
     shopifyProductId: movement.shopifyProductId,
     shopifyVariantId: movement.shopifyVariantId,
     shopifyLocationId: movement.shopifyLocationId,
@@ -2040,6 +2029,262 @@ const sendStockChanges = async ({ articleEndpoint, movements, product, syncDetai
   }
 };
 
+const MAX_EASYCASHIER_STOCK_MOVEMENTS_PER_REQUEST = 500;
+
+const sendBulkStockChanges = async ({ articleEndpoint, movements, syncDetails, logger }) => {
+  for (const group of buildStockChangeRequestGroups(movements)) {
+    for (let index = 0; index < group.movements.length; index += MAX_EASYCASHIER_STOCK_MOVEMENTS_PER_REQUEST) {
+      await sendStockChangeRequest({
+        articleEndpoint,
+        group: {
+          ...group,
+          movements: group.movements.slice(index, index + MAX_EASYCASHIER_STOCK_MOVEMENTS_PER_REQUEST),
+        },
+        product: null,
+        syncDetails,
+        logger,
+      });
+    }
+  }
+};
+
+export const sendEasyCashierInventoryBatch = async ({
+  api,
+  logger,
+  products,
+  signal,
+  recordCompletion = true,
+}) => {
+  const articleEndpoint = resolveEndpoint("EASYCASHIER_API_BASE_URL/EASYCASHIER_COMPANY_ID/article");
+  const normalizedProducts = Array.isArray(products) ? products : [];
+  const preparedProducts = [];
+  const failedProducts = [];
+  const movements = [];
+  const syncDetails = {
+    endpointName: "inventory-batch",
+    method: "POST",
+    requests: [],
+  };
+
+  for (const product of normalizedProducts) {
+    if (typeof signal?.throwIfAborted === "function") signal.throwIfAborted();
+    if (signal?.aborted) throw new Error("EasyCashier inventory sync was cancelled");
+
+    try {
+      if (isMissingShopifySkuProduct(product)) {
+        throw new Error("Missing Shopify SKU in EasyCashier inventory payload");
+      }
+
+      const desiredStockLevels = desiredStockLevelsForProduct(product);
+
+      if (desiredStockLevels.length === 0) {
+        continue;
+      }
+
+      const article = await resolveEasyCashierArticleWithStock({
+        articleEndpoint,
+        product,
+        logger,
+      });
+      const productMovements = buildStockChangeMovements({
+        articleEndpoint,
+        product,
+        article,
+      });
+
+      preparedProducts.push({ product, desiredStockLevels });
+      movements.push(...productMovements);
+    } catch (error) {
+      const canSkipProduct =
+        error?.code === ARTICLE_NOT_FOUND_CODE ||
+        isMissingShopifySkuError(error) ||
+        errorMessageForLog(error).includes("Could not determine current EasyCashier stock");
+
+      if (!canSkipProduct) throw error;
+
+      failedProducts.push({
+        shopifyProductId: product?.shopifyProductId ?? null,
+        shopifyVariantId: product?.shopifyVariantId ?? null,
+        articleNumber: optionalArticleNumberFromProduct(product),
+        errorMessage: errorMessageForLog(error),
+      });
+      logger.warn(
+        failedProducts[failedProducts.length - 1],
+        "Skipped Shopify variant during EasyCashier full inventory sync"
+      );
+    }
+  }
+
+  await sendBulkStockChanges({
+    articleEndpoint,
+    movements,
+    syncDetails,
+    logger,
+  });
+
+  for (const { product, desiredStockLevels } of preparedProducts) {
+    cacheEasyCashierStockLevels({ articleEndpoint, product, stockLevels: desiredStockLevels });
+  }
+
+  if (recordCompletion) {
+    await recordCompletedEasyCashierInventorySyncBatch({
+      api,
+      productsWithStockLevels: preparedProducts.map(({ product, desiredStockLevels }) => ({
+        product,
+        stockLevels: desiredStockLevels,
+      })),
+      logger,
+    });
+  }
+
+  return {
+    processedVariantCount: preparedProducts.length,
+    failedVariantCount: failedProducts.length,
+    inventoryMovementCount: movements.length,
+    stockRequestCount: syncDetails.requests.length,
+    failedProducts,
+  };
+};
+
+// Loads the EasyCashier article catalog once for a full inventory run. The
+// returned Map is intentionally process-local: it is never written to Gadget
+// and is discarded when the background action finishes.
+export const fetchEasyCashierInventorySnapshot = async ({ logger, signal }) => {
+  const articleEndpoint = resolveEndpoint("EASYCASHIER_API_BASE_URL/EASYCASHIER_COMPANY_ID/article");
+  const articlesByLookupValue = new Map();
+  const pageFingerprints = new Set();
+  let pageNumber = 1;
+  let requestCount = 0;
+
+  while (true) {
+    if (typeof signal?.throwIfAborted === "function") signal.throwIfAborted();
+    if (signal?.aborted) throw new Error("EasyCashier inventory sync was cancelled");
+
+    const lookupEndpoint = pagedArticleListLookupEndpoint(
+      articleEndpoint,
+      pageNumber,
+      MAX_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE
+    );
+    const response = await fetchEasyCashier(lookupEndpoint, {
+      method: "GET",
+      headers: authHeaders(),
+    });
+    const responseBody = await parseJsonResponse(response);
+    requestCount += 1;
+
+    if (!response.ok) {
+      throw new Error(`EasyCashier article snapshot lookup failed with status ${response.status}`);
+    }
+
+    const articles = articleRecordsFromResponse(responseBody.json);
+    const fingerprint = articles
+      .slice(0, 3)
+      .map((article) => `${articleId(article) ?? ""}:${articleNumber(article) ?? ""}`)
+      .join("|");
+
+    if (articles.length > 0 && pageFingerprints.has(fingerprint)) {
+      throw new Error("EasyCashier article pagination returned the same page more than once");
+    }
+    if (articles.length > 0) pageFingerprints.add(fingerprint);
+
+    for (const article of articles) {
+      for (const lookupValue of articleLookupValues(article)) {
+        if (!articlesByLookupValue.has(lookupValue)) {
+          articlesByLookupValue.set(lookupValue, article);
+        }
+      }
+    }
+
+    const pagination = articleLookupPagination(responseBody.json, lookupEndpoint);
+    const hasNextPage = pagination?.hasNextPage ?? articles.length >= MAX_EASYCASHIER_ARTICLE_LOOKUP_PAGE_SIZE;
+
+    if (!hasNextPage || articles.length === 0) break;
+    pageNumber = pagination ? pagination.currentPage + 1 : pageNumber + 1;
+  }
+
+  logger.info(
+    { articleCount: articlesByLookupValue.size, requestCount },
+    "Loaded in-memory EasyCashier inventory snapshot"
+  );
+
+  return { articleEndpoint, articlesByLookupValue, requestCount };
+};
+
+export const sendEasyCashierInventoryFromSnapshot = async ({ logger, products, snapshot, signal }) => {
+  const normalizedProducts = Array.isArray(products) ? products : [];
+  const preparedProducts = [];
+  const failedProducts = [];
+  const movements = [];
+  const syncDetails = {
+    endpointName: "inventory-snapshot",
+    method: "POST",
+    requests: [],
+  };
+
+  for (const product of normalizedProducts) {
+    if (typeof signal?.throwIfAborted === "function") signal.throwIfAborted();
+    if (signal?.aborted) throw new Error("EasyCashier inventory sync was cancelled");
+
+    try {
+      if (isMissingShopifySkuProduct(product)) {
+        throw new Error("Missing Shopify SKU in EasyCashier inventory payload");
+      }
+
+      const desiredStockLevels = desiredStockLevelsForProduct(product);
+      if (desiredStockLevels.length === 0) continue;
+
+      const articleNumbers = articleNumbersForLookup(product);
+      const article = articleNumbers
+        .map((value) => snapshot.articlesByLookupValue.get(String(value).trim()))
+        .find(Boolean);
+
+      if (!article) {
+        const error = new Error(`No EasyCashier article found for SKU lookup value(s) ${articleNumbers.join(", ")}`);
+        error.code = ARTICLE_NOT_FOUND_CODE;
+        throw error;
+      }
+
+      const productMovements = buildStockChangeMovements({
+        articleEndpoint: snapshot.articleEndpoint,
+        product,
+        article,
+      });
+      preparedProducts.push({ product, desiredStockLevels });
+      movements.push(...productMovements);
+    } catch (error) {
+      const canSkipProduct =
+        error?.code === ARTICLE_NOT_FOUND_CODE ||
+        isMissingShopifySkuError(error) ||
+        errorMessageForLog(error).includes("Could not determine current EasyCashier stock");
+
+      if (!canSkipProduct) throw error;
+
+      failedProducts.push({
+        shopifyProductId: product?.shopifyProductId ?? null,
+        shopifyVariantId: product?.shopifyVariantId ?? null,
+        articleNumber: optionalArticleNumberFromProduct(product),
+        errorMessage: errorMessageForLog(error),
+      });
+      logger.warn(failedProducts[failedProducts.length - 1], "Skipped Shopify variant during EasyCashier full inventory sync");
+    }
+  }
+
+  await sendBulkStockChanges({
+    articleEndpoint: snapshot.articleEndpoint,
+    movements,
+    syncDetails,
+    logger,
+  });
+
+  return {
+    processedVariantCount: preparedProducts.length,
+    failedVariantCount: failedProducts.length,
+    inventoryMovementCount: movements.length,
+    stockRequestCount: syncDetails.requests.length,
+    failedProducts,
+  };
+};
+
 const syncEasyCashierInventory = async ({
   api,
   articleEndpoint,
@@ -2048,7 +2293,6 @@ const syncEasyCashierInventory = async ({
   responseBody,
   syncDetails,
   logger,
-  allowMissingCurrentStock = false,
 }) => {
   if (desiredStockLevels.length === 0) {
     return 0;
@@ -2073,7 +2317,6 @@ const syncEasyCashierInventory = async ({
     articleEndpoint,
     product,
     article: easyCashierArticle,
-    allowMissingCurrentStock,
   });
 
   if (movements.length === 0) {
@@ -2460,8 +2703,6 @@ export const sendEasyCashierProductPayload = async ({
           responseBody,
           syncDetails,
           logger,
-          allowMissingCurrentStock:
-            requestEndpointName === "create" || payload?.topic === "inventory_levels/update",
         });
         requestDetails.inventoryMovementCount = inventoryMovementCount;
         syncDetails.inventoryMovementCount = (syncDetails.inventoryMovementCount ?? 0) + inventoryMovementCount;
@@ -2645,7 +2886,7 @@ const configuredBulkImportStoreNumbers = () => {
 };
 
 const isMissingShopifySkuError = (error) =>
-  errorMessageForLog(error).includes("Missing Shopify SKU in EasyCashier product payload");
+  errorMessageForLog(error).includes("Missing Shopify SKU in EasyCashier");
 
 export const isShopifyNetworkError = (error) => {
   const message = errorMessageForLog(error);

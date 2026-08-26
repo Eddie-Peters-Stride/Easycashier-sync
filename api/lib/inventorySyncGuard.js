@@ -19,6 +19,22 @@ const locationKey = (stockLevel) =>
     ? String(stockLevel.shopifyLocationId)
     : `store:${String(stockLevel?.storeNumber ?? "unknown")}`;
 
+const completedState = ({ stockLevels, now }) => ({
+  version: 2,
+  locations: Object.fromEntries(
+    stockLevels.map((stockLevel) => [
+      locationKey(stockLevel),
+      {
+        status: "completed",
+        storeNumber: Number(stockLevel.storeNumber),
+        quantity: Number(stockLevel.desiredQuantity),
+        completedAt: now,
+        expiresAt: now + INVENTORY_SYNC_DEDUP_TTL_MS,
+      },
+    ])
+  ),
+});
+
 const variantState = async ({ api, variantId }) => {
   const variant = await api.shopifyProductVariant.findOne(String(variantId), {
     select: {
@@ -95,5 +111,41 @@ export const recordCompletedEasyCashierInventorySync = async ({
       })),
     },
     "Recorded completed EasyCashier inventory synchronization"
+  );
+};
+
+export const recordCompletedEasyCashierInventorySyncBatch = async ({
+  api,
+  productsWithStockLevels,
+  logger,
+  now = Date.now(),
+}) => {
+  const updates = (Array.isArray(productsWithStockLevels) ? productsWithStockLevels : [])
+    .map(({ product, stockLevels }) => {
+      const variantId = variantIdFromProduct(product);
+
+      if (!variantId || !Array.isArray(stockLevels) || stockLevels.length === 0) return null;
+
+      return {
+        id: variantId,
+        easyCashierInventorySyncState: completedState({ stockLevels, now }),
+      };
+    })
+    .filter(Boolean);
+
+  if (updates.length === 0) return;
+
+  // Gadget's Internal API for Shopify-managed models exposes update, but not
+  // bulkUpdate/updateMany. Keep these raw state writes serial to avoid
+  // triggering public variant actions or contending with Gadget's request-rate
+  // tracker. Full-catalog inventory runs do not call this marker writer.
+  for (const update of updates) {
+    const { id, ...values } = update;
+    await api.internal.shopifyProductVariant.update(id, values);
+  }
+
+  logger.info(
+    { variantCount: updates.length },
+    "Recorded completed EasyCashier inventory synchronization batch"
   );
 };

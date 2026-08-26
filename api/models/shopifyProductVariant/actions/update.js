@@ -16,18 +16,20 @@ export const run = async ({ params, record, logger, api, connections }) => {
 
 /** @type { ActionOnSuccess } */
 export const onSuccess = async ({ params, record, logger, api, connections, trigger }) => {
-  const inventoryChanged = record.changes("inventoryQuantity")?.changed;
-  const skuChanged = record.changes("sku")?.changed;
+  const priceChanged = record.changed("price");
+  const skuChanged = record.changed("sku");
 
-  if (!inventoryChanged && !skuChanged) return;
-
-  await enqueueShopifyProductVariantInventoryEasyCashierSync({
-    api,
-    logger,
-    trigger,
-    record,
-    previousSku: params.__easyCashierPreviousSku ?? record.__easyCashierPreviousSku,
-  });
+  if (false) {
+    const changes = record.changes();
+    console.log("VariantUpdateTrigger", JSON.stringify(changes))
+    await enqueueShopifyProductVariantInventoryEasyCashierSync({
+      api,
+      logger,
+      trigger,
+      record,
+      previousSku: params.__easyCashierPreviousSku ?? record.__easyCashierPreviousSku,
+    });
+  }
 };
 
 /** @type { ActionOptions } */

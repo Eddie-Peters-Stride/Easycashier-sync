@@ -21,7 +21,7 @@ export const run = async ({ params, logger, api, connections, trigger }) => {
     };
   }
 
-  return await sendEasyCashierProductPayload({
+ return await sendEasyCashierProductPayload({
     api,
     params,
     logger,
@@ -29,7 +29,7 @@ export const run = async ({ params, logger, api, connections, trigger }) => {
     endpoint: "EASYCASHIER_API_BASE_URL/EASYCASHIER_COMPANY_ID/article",
     endpointName: "delete",
     method: "DELETE",
-  });
+  }); 
 };
 
 /** @type { ActionOptions } */

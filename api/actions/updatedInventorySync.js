@@ -15,7 +15,7 @@ export const run = async ({ logger, api, connections, trigger }) => {
     return { success: true, skipped: true };
   }
 
-  await enqueueShopifyInventoryLevelEasyCashierSync({
+  void enqueueShopifyInventoryLevelEasyCashierSync({
     api,
     logger,
     connections,
@@ -31,7 +31,7 @@ export const options = {
   triggers: {
     api: true,
     shopify: {
-      triggerKey: "shopifyinventorylevel-update",
+      triggerKey: "updatedInventorySync",
     },
   },
 };

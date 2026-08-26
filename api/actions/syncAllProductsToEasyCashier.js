@@ -63,6 +63,7 @@ const startQueuedSync = async ({ api, logger, connections, shopId, signal }) => 
     const productBatches = chunkValues(productIds, EASYCASHIER_SYNC_BATCH_SIZE);
     const syncRunId = `${shopId}:${Date.now().toString(36)}`;
     const batchBackgroundActionIds = [];
+    let inventoryBackgroundActionId = null;
 
     if (productIds.length === 0) {
       logger.info(
@@ -78,6 +79,7 @@ const startQueuedSync = async ({ api, logger, connections, shopId, signal }) => 
         totalProducts: 0,
         queuedBatchCount: 0,
         batchBackgroundActionIds: [],
+        inventoryBackgroundActionId: null,
       };
     }
 
@@ -113,11 +115,33 @@ const startQueuedSync = async ({ api, logger, connections, shopId, signal }) => 
       }
     }
 
+    // This coordinator shares the serialized product-import queue, so it only
+    // starts after every article batch has succeeded. Inventory reconciliation
+    // can therefore safely resolve all newly imported EasyCashier articles.
+    const inventoryHandle = await api.enqueue(
+      api.syncAllInventoryToEasyCashier,
+      { shopId },
+      {
+        id: `${syncRunId}:inventory`,
+        queue: EASYCASHIER_BULK_SYNC_QUEUE,
+        shopifyShop: shopId,
+        retries: {
+          retryCount: 5,
+          initialInterval: 2000,
+          maxInterval: 60000,
+          backoffFactor: 2,
+          randomizeInterval: true,
+        },
+      }
+    );
+    inventoryBackgroundActionId = inventoryHandle?.id == null ? null : String(inventoryHandle.id);
+
     logger.info(
       {
         shopId,
         queuedBatchCount: productBatches.length,
         queuedProductCount: productIds.length,
+        inventoryBackgroundActionId,
       },
       "Queued EasyCashier full product sync jobs"
     );
@@ -128,6 +152,7 @@ const startQueuedSync = async ({ api, logger, connections, shopId, signal }) => 
       totalProducts: productIds.length,
       queuedBatchCount: productBatches.length,
       batchBackgroundActionIds,
+      inventoryBackgroundActionId,
     };
   } catch (error) {
     if (isAbortError(error)) {

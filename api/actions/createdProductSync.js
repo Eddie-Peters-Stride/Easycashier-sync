@@ -15,7 +15,7 @@ export const run = async ({ params, logger, api, connections }) => {
     endpoint: "EASYCASHIER_API_BASE_URL/EASYCASHIER_COMPANY_ID/article",
     endpointName: "create",
     method: "POST",
-  });
+  }); 
 };
 
 /** @type { ActionOptions } */

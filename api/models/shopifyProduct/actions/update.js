@@ -7,10 +7,6 @@ const skipsGadgetProductStorage = (trigger) =>
 
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections, trigger }) => {
-  if (skipsGadgetProductStorage(trigger)) {
-    return;
-  }
-
   applyParams(params, record);
   await preventCrossShopDataAccess(params, record);
   await save(record);
@@ -18,13 +14,19 @@ export const run = async ({ params, record, logger, api, connections, trigger })
 
 /** @type { ActionOnSuccess } */
 export const onSuccess = async ({ params, record, logger, api, connections, trigger }) => {
-  await enqueueShopifyProductEasyCashierSync({
-    api,
-    logger,
-    trigger,
-    record,
-    fallbackEvent: "updated",
-  });
+  const titleChanged = record.changed("title");
+
+  if (false) {
+    const changes = record.changes();
+    console.log("productUpdateTrigger", JSON.stringify(changes))
+    await enqueueShopifyProductEasyCashierSync({
+      api,
+      logger,
+      trigger,
+      record,
+      fallbackEvent: "updated",
+    });
+  }
 };
 
 /** @type { ActionOptions } */

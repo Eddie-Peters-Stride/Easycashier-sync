@@ -25,7 +25,7 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     trigger,
     record,
     deletedVariant: params.__easyCashierDeletedVariant ?? record.__easyCashierDeletedVariant,
-  });
+  }); 
 };
 
 /** @type { ActionOptions } */
