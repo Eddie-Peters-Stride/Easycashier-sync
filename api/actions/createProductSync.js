@@ -1,41 +1,75 @@
 import { EasycashierClient } from "../lib/EasycashierApiClient";
 
 /** @type { ActionRun } */
-export const run = async ({ params, logger, api, connections }) => {
-    const easycashierClient = new EasycashierClient();
-    const product = params.product;
-    logger.info(
-        { shopId: params.shopId, product },
-        "Starting product sync"
-    );
-
-
+export const run = async ({ params, logger }) => {
     try {
-        logger.info(JSON.stringify(params));
-        const productPayload = {
-            articleNumber: String(product.sku),
-            description: product.title,
-            barcode: String(product.ean),
-            articleType: "PRODUCT",
-            retailPriceIncludingVat: numberFromValue(product?.pris ?? product?.price, 0),
-            costPriceExcludingVat: configuredNumber("EASYCASHIER_DEFAULT_COST_PRICE_EXCLUDING_VAT", 0),
-            vat: 0.25,
-            webshop: true,
-            webshopArticleId: product.id,
+        const product = params.product;
+        const variants = product?.variants;
+
+        if (!Array.isArray(variants) || variants.length === 0) {
+            throw new Error("Missing Shopify product variants for EasyCashier product creation");
         }
 
-        logger.info("Product payload built successfully", { productPayload });
+        const easycashierClient = new EasycashierClient();
+        const responses = [];
 
-        const res = await easycashierClient.createProduct({ input: productPayload });
-        logger.info("Product sync created successfully", { res });
+        for (const variant of variants) {
+            const sku = variant?.sku == null ? "" : String(variant.sku).trim();
+
+            if (!sku) {
+                throw new Error(`Missing SKU for Shopify variant ${variant?.id ?? "unknown"}`);
+            }
+
+            const productPayload = {
+                articleNumber: sku,
+                description: product.title ?? "",
+                barcode: variant.barcode == null ? null : String(variant.barcode),
+                articleType: "PRODUCT",
+                retailPriceIncludingVat: variant.price || 0,
+                vat: variant.taxable === false ? 0 : 0.25,
+                webshop: true,
+                webshopArticleId: product.id == null ? null : String(product.id),
+            };
+
+            logger.info(
+                {
+                    shopId: params.shopId,
+                    productId: product.id,
+                    variantId: variant.id,
+                    productPayload,
+                },
+                "Creating Shopify product variant in EasyCashier"
+            );
+
+            const response = await easycashierClient.createProduct({ input: productPayload });
+            responses.push({ variantId: variant.id, response });
+        }
+
+        logger.info(
+            {
+                productId: product.id,
+                variantCount: variants.length,
+            },
+            "Product variants created successfully in EasyCashier"
+        );
+
+        return responses;
     }
     catch (error) {
-        logger.error("Error creating product sync", { error: error.message });
+        logger.error(
+            {
+                error,
+                shopId: params.shopId,
+                productId: params.product?.id,
+            },
+            "Error creating product sync"
+        );
+        throw error;
     }
 };
 
 
 export const params = {
     shopId: { type: "string" },
-    product: { type: "json" },
+    product: { type: "object", additionalProperties: true },
 };

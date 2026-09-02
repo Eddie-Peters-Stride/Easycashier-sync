@@ -6,7 +6,7 @@ export class EasycashierClient {
         timeoutMs = 20_000,
     } = {}) {
         if (!process.env.EASYCASHIER_API_BASE_URL || !process.env.EASYCASHIER_API_TOKEN || !process.env.EASYCASHIER_COMPANY_ID) {
-            throw new Error("Missing EASYCASHIER_API_BASE_URL or EASYCASHIER_API_TOKEN or EASYCASHIER_API_COMPANY_ID environment variable");
+            throw new Error("Missing EASYCASHIER_API_BASE_URL or EASYCASHIER_API_TOKEN or EASYCASHIER_COMPANY_ID environment variable");
         }
 
         this.api = axios.create({
