@@ -2,9 +2,6 @@ import { applyParams, save, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
 import { enqueueShopifyProductEasyCashierSync } from "../../../lib/manageProduct.js";
 
-const skipsGadgetProductStorage = (trigger) =>
-  ["shopify_webhook", "shopify_sync", "shopify_webhook_reconciliation"].includes(trigger?.type);
-
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections, trigger }) => {
   applyParams(params, record);
@@ -16,16 +13,14 @@ export const run = async ({ params, record, logger, api, connections, trigger })
 export const onSuccess = async ({ params, record, logger, api, connections, trigger }) => {
   const titleChanged = record.changed("title");
 
-  if (false) {
-    const changes = record.changes();
-    console.log("productUpdateTrigger", JSON.stringify(changes))
-    await enqueueShopifyProductEasyCashierSync({
-      api,
-      logger,
-      trigger,
-      record,
-      fallbackEvent: "updated",
-    });
+  if (titleChanged) {
+    await api.enqueue(api.createProductSync, {
+      payload: {
+        shopId: record.shopId,
+        record,
+        params
+      }
+    })
   }
 };
 
