@@ -24,11 +24,31 @@ export const run = async ({ params, logger }) => {
                 articleNumber: sku,
                 description: product.title ?? "",
                 barcode: variant.barcode == null ? null : String(variant.barcode),
+                barcode2: null,
                 articleType: "PRODUCT",
-                retailPriceIncludingVat: variant.price || 0,
-                vat: variant.taxable === false ? 0 : 0.25,
+                retailPriceIncludingVat: variant.price,
+                costPriceExcludingVat: variant.price,
+                averageCostPriceExcludingVat: variant.price,
+                accountNumber: 3051,
+                vat: 0.25,
                 webshop: true,
                 webshopArticleId: product.id == null ? null : String(product.id),
+                erp: false,
+                erpArticleId: null,
+                specialOfferStartDate: null,
+                specialOfferStopDate: null,
+                specialOfferDiscount: null,
+                specialOfferDiscountType: null,
+                articleStorePrices: [],
+                accumulative: false,
+                askForQuantity: false,
+                addTextWhenSold: false,
+                stockItem: false,
+                storageArea: null,
+                supplierArticleNumber: "",
+                articleGroupId: null,
+                supplierNumber: null,
+                stockEntries: [],
             };
 
             logger.info(
@@ -56,15 +76,25 @@ export const run = async ({ params, logger }) => {
         return responses;
     }
     catch (error) {
+        const status = error?.response?.status;
         logger.error(
             {
-                error,
+                message: error?.message ?? String(error),
+                code: error?.code,
+                status,
+                responseData: error?.response?.data,
                 shopId: params.shopId,
                 productId: params.product?.id,
             },
             "Error creating product sync"
         );
-        throw error;
+
+        // Axios errors contain the request configuration, including the API
+        // token header. Throw a sanitized error so Gadget can retry the job
+        // without writing credentials to its automatic error logs.
+        throw new Error(
+            `EasyCashier product creation failed${status ? ` with status ${status}` : ""}: ${error?.message ?? String(error)}`
+        );
     }
 };
 

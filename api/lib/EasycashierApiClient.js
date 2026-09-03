@@ -9,7 +9,7 @@ export class EasycashierClient {
         loginUrl = process.env.EASYCASHIER_LOGIN_URL || DEFAULT_LOGIN_URL,
         username = process.env.EASYCASHIER_API_USERNAME,
         password = process.env.EASYCASHIER_API_PASSWORD,
-        authHeaderName = process.env.EASYCASHIER_API_AUTH_HEADER_NAME || "X-Api-Key",
+        authHeaderName = process.env.EASYCASHIER_API_AUTH_HEADER_NAME || "x-auth-token",
         timeoutMs = 20_000,
         tokenRefreshBufferMs = DEFAULT_TOKEN_REFRESH_BUFFER_MS,
     } = {}) {
@@ -201,13 +201,41 @@ export class EasycashierClient {
 
 
     /**
-        * Get sales data from Easycashier
-        * @param {Object} input - Product input data
-        * @returns {Promise<Object>} Synced product data
-        */
+     * Get all sales rows for today's date in Sweden.
+     * @returns {Promise<{date: string, items: Object[]}>} Today's sales grouped by article and store
+     */
     async getTodaysSalesData() {
-        const res = await this.api.get(`/report/sales/groupedByArticleAndStore/preview?itemsPerPage=50&pageNumber=1&startDate=2026-09-02&stopDate=2026-09-02`);
-        const response = res.data;
-        return response;
+        const today = new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Europe/Stockholm",
+        }).format(new Date());
+        const items = [];
+        const itemsPerPage = 50;
+
+        for (let pageNumber = 1; pageNumber <= 100; pageNumber += 1) {
+            const response = await this.api.get(
+                "/report/sales/groupedByArticleAndStore/preview",
+                {
+                    params: {
+                        itemsPerPage,
+                        pageNumber,
+                        startDate: today,
+                        stopDate: today,
+                    },
+                }
+            );
+            const pageItems = response.data?.items;
+
+            if (!Array.isArray(pageItems)) {
+                throw new Error("EasyCashier sales response did not contain an items array");
+            }
+
+            items.push(...pageItems);
+
+            if (pageItems.length < itemsPerPage) {
+                return { date: today, items };
+            }
+        }
+
+        throw new Error("EasyCashier sales report exceeded 100 pages");
     }
 }

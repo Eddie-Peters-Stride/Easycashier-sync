@@ -1,21 +1,38 @@
-import { EasycashierClient } from "../lib/EasycashierApiClient";
+/**
+ * Queue the inventory sync and return immediately.
+ * All EasyCashier and Shopify requests run inside the queued worker action.
+ * @type {ActionRun}
+ */
+export const run = async ({ api, logger }) => {
+  const job = await api.enqueue(
+    api.processEasyCashierInventorySync,
+    {},
+    {
+      queue: {
+        name: "easycashier-inventory-sync",
+        maxConcurrency: 1,
+      },
+      priority: "HIGH",
+      retries: {
+        retryCount: 2,
+      },
+    }
+  );
 
-/** @type { ActionRun } */
-export const run = async ({ params, logger, api, connections }) => {
-  const easycashierClient = new EasycashierClient();
-  try {
-    const data = await easycashierClient.getTodaysSalesData();
-    logger.info({ data }, "Inventory sync completed successfully");
-  } catch (error) {
-    logger.error({ error: error.message }, "Error syncing inventory from Easycashier");
-  }
+  logger.info(
+    { jobId: job?.id ?? null },
+    "Queued EasyCashier inventory sync"
+  );
+
+  return {
+    queued: true,
+    jobId: job?.id ?? null,
+  };
 };
 
-
-// Sync every 15 minutes
 export const options = {
   triggers: {
     api: true,
-    //scheduler: [{ cron: "*/15 * * * *" }],
+    // scheduler: [{ cron: "*/15 * * * *" }],
   },
-}
+};
