@@ -4,10 +4,10 @@ import { EasycashierClient } from "../lib/EasycashierApiClient";
 export const run = async ({ params, logger, api, connections }) => {
   const easycashierClient = new EasycashierClient();
   try {
-    const data = await easycashierClient.syncInventoryFromEasycashier({ input: params });
-    logger.info("Inventory sync completed successfully", { data });
+    const data = await easycashierClient.getTodaysSalesData();
+    logger.info({ data }, "Inventory sync completed successfully");
   } catch (error) {
-    logger.error("Error syncing inventory from Easycashier", { error: error.message });
+    logger.error({ error: error.message }, "Error syncing inventory from Easycashier");
   }
 };
 

@@ -1,71 +1,4 @@
-const fetchEasyCashier = async (url, options) => {
-  return await fetch(url, options);
-};
 
-const resolveEndpoint = (endpoint) => {
-  const missingEnvVars = new Set();
-  const resolvedEndpoint = endpoint.replace(/\bEASYCASHIER_[A-Z0-9_]+\b/g, (envVarName) => {
-    const value = process.env[envVarName];
-
-    if (!value) {
-      missingEnvVars.add(envVarName);
-      return envVarName;
-    }
-
-    return value;
-  });
-
-  if (missingEnvVars.size > 0) {
-    throw new Error(`Missing EasyCashier environment variable(s): ${Array.from(missingEnvVars).join(", ")}`);
-  }
-
-  return resolvedEndpoint.replace(/([^:])\/{2,}/g, "$1/");
-};
-
-const DEFAULT_VAT_RATE = 25;
-const configuredVatRate = () => {
-  const rawRate = process.env.SHOPIFY_PRODUCT_DEFAULT_VAT_RATE;
-  const parsedRate = rawRate == null ? DEFAULT_VAT_RATE : Number.parseFloat(rawRate);
-
-  return Number.isFinite(parsedRate) ? parsedRate : DEFAULT_VAT_RATE;
-};
-
-const vatForTaxable = (taxable) => {
-  if (taxable === false) {
-    return 0;
-  }
-
-  return configuredVatRate();
-};
-
-const idFromGid = (gid) => {
-  if (typeof gid !== "string") {
-    return null;
-  }
-
-  return gid.split("/").pop() || null;
-};
-
-
-const productGidFromPayload = (payload) => {
-  if (payload?.shopifyProductGid) {
-    return payload.shopifyProductGid;
-  }
-
-  if (payload?.admin_graphql_api_id) {
-    return payload.admin_graphql_api_id;
-  }
-
-  if (payload?.shopifyProductId) {
-    if (String(payload.shopifyProductId).startsWith("gid://")) {
-      return payload.shopifyProductId;
-    }
-
-    return `gid://shopify/Product/${payload.shopifyProductId}`;
-  }
-
-  return null;
-};
 
 const normalizeShopifyVariant = (variant) => ({
   id: variant?.legacyResourceId == null ? idFromGid(variant?.id) : String(variant.legacyResourceId),
@@ -186,17 +119,6 @@ const parseShopifyGraphqlResult = (result) => {
 
   return data;
 };
-
-const createShopifyProductNotFoundError = (productGid) => {
-  const error = new Error(`Shopify product ${productGid} was not found`);
-  error.code = SHOPIFY_PRODUCT_NOT_FOUND_CODE;
-  return error;
-};
-
-const isShopifyProductNotFoundError = (error) =>
-  error?.code === SHOPIFY_PRODUCT_NOT_FOUND_CODE ||
-  /Shopify product .* was not found/i.test(error?.message ?? "");
-
 export const fetchFreshShopifyProductRows = async ({ connections, payload }) => {
   const productGid = productGidFromPayload(payload);
 
@@ -339,16 +261,6 @@ const optionalStringFromValue = (value) =>
   value == null || value === "" ? null : String(value);
 
 
-const productDetailsForLog = (product) => ({
-  shopifyProductId: product?.shopifyProductId ?? null,
-  shopifyVariantId: product?.shopifyVariantId ?? null,
-  articleNumber: optionalArticleNumberFromProduct(product),
-  sku: optionalShopifySkuFromProduct(product),
-  name: product?.produktnamn ?? product?.title ?? product?.description ?? null,
-  price: product?.pris ?? product?.price ?? null,
-  ean: product?.ean ?? product?.barcode ?? null,
-  vat: product?.moms ?? null,
-});
 
 const articleNumbersForLookup = (product) => {
   const articleNumber = optionalArticleNumberFromProduct(product);
