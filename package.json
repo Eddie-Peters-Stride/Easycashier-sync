@@ -9,6 +9,7 @@
     "test": "node --experimental-default-type=module --test --test-concurrency=1 tests/unit/manageProduct.test.js tests/unit/easycashierRateLimit.test.js tests/integration/easycashierInventoryLocationSync.test.js tests/integration/easycashierProductSync.test.js tests/integration/syncAllProductsToEasyCashier.test.js tests/integration/syncAllInventoryToEasyCashier.test.js",
     "test:integration": "node --experimental-default-type=module --test --test-concurrency=1 tests/integration/easycashierInventoryLocationSync.test.js tests/integration/easycashierProductSync.test.js tests/integration/syncAllProductsToEasyCashier.test.js tests/integration/syncAllInventoryToEasyCashier.test.js",
     "test:unit": "node --experimental-default-type=module --test --test-concurrency=1 tests/unit/manageProduct.test.js tests/unit/easycashierRateLimit.test.js",
+    "test:stress": "node --experimental-default-type=module --test --test-concurrency=1 tests/unit/shopifyInventoryStress.test.js",
     "shopify": "shopify",
     "shopify:config:use:development": "shopify app config use shopify.app.new-sync-update.toml",
     "shopify:config:use:production": "shopify app config use shopify.app.toml",

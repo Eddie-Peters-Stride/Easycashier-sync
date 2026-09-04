@@ -1,11 +1,15 @@
 import { EasycashierClient } from "../lib/EasycashierApiClient";
 import { findEasycashierArticle } from "../lib/findEasycashierArticle";
+import { createEasyCashierRateLimiter } from "../lib/easycashierRateLimit.js";
 
 const normalizeSku = (value) => value == null ? "" : String(value).trim();
 
 /** @type { ActionRun } */
 export const run = async ({ params, logger, api, connections }) => {
-    const easycashierClient = new EasycashierClient();
+    const easycashierClient = new EasycashierClient({
+        rateLimiter: createEasyCashierRateLimiter({ api, logger }),
+        logger,
+    });
     const lookupArticleNumber = normalizeSku(params.lookupArticleNumber);
 
     if (!lookupArticleNumber) {
@@ -117,4 +121,8 @@ export const params = {
     productTitle: { type: "string" },
     lookupArticleNumber: { type: "string" },
     changes: { type: "object", additionalProperties: true },
+};
+
+export const options = {
+    timeoutMS: 900000,
 };

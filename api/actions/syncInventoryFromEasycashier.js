@@ -1,3 +1,5 @@
+import { EASYCASHIER_QUEUE } from "../lib/easycashierQueue.js";
+
 /**
  * Queue the inventory sync and return immediately.
  * All EasyCashier and Shopify requests run inside the queued worker action.
@@ -8,10 +10,7 @@ export const run = async ({ api, logger, params }) => {
     api.processEasyCashierInventorySync,
     { test: params.test },
     {
-      queue: {
-        name: "easycashier-inventory-sync",
-        maxConcurrency: 1,
-      },
+      queue: EASYCASHIER_QUEUE,
       priority: "HIGH",
       retries: {
         retryCount: 2,

@@ -1,5 +1,6 @@
 import { deleteRecord, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
+import { EASYCASHIER_QUEUE } from "../../../lib/easycashierQueue.js";
 
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections }) => {
@@ -38,7 +39,7 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     productTitle: trigger?.payload?.title,
     productSkus: [sku],
   }, {
-    queue: { name: "easycashier-sync", maxConcurrency: 1 },
+    queue: EASYCASHIER_QUEUE,
     id: `delete-product-sync-${deletedVariant.productId}-${sku}`,
     priority: "DEFAULT",
     retries: { retryCount: 2 },

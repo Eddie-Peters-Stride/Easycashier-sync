@@ -1,5 +1,6 @@
 import { applyParams, save, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
+import { EASYCASHIER_QUEUE } from "../../../lib/easycashierQueue.js";
 
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections, trigger }) => {
@@ -52,7 +53,7 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       shopId: String(trigger?.shopId ?? record.shopId),
       product: { ...product, variants: newVariants },
     }, {
-      queue: { name: "easycashier-sync", maxConcurrency: 1 },
+      queue: EASYCASHIER_QUEUE,
       id: `create-product-sync-${product.id}`,
       priority: "DEFAULT",
       retries: { retryCount: 2 },
@@ -85,7 +86,7 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       lookupArticleNumber: sku,
       changes: { description: product.title ?? "" },
     }, {
-      queue: { name: "easycashier-sync", maxConcurrency: 1 },
+      queue: EASYCASHIER_QUEUE,
       id: `update-product-sync-${product.id}-${sku}`,
       priority: "DEFAULT",
       retries: { retryCount: 2 },

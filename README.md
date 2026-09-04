@@ -36,7 +36,7 @@ Shopify `products/create` triggers
 1. The Shopify product and all variants are read from the webhook payload.
 2. If any variant has no SKU, creation of the entire product is skipped and a
    warning is logged.
-3. `createProductSync` is queued in the single-concurrency `easycashier-sync`
+3. `createProductSync` is queued in the single-concurrency `easycashier-api`
    queue.
 4. Every unique variant SKU is searched in EasyCashier.
 5. If the exact SKU already exists, it is left unchanged.
@@ -119,7 +119,7 @@ change Shopify inventory.
 
 The public entry action is `syncInventoryFromEasycashier`. It queues
 `processEasyCashierInventorySync` in the
-`easycashier-inventory-sync` queue with a maximum concurrency of one and two
+`easycashier-api` queue with a maximum concurrency of one and two
 retries.
 
 The inventory scheduler in `syncInventoryFromEasycashier.js` is currently
@@ -230,11 +230,11 @@ selected Gadget environment.
 The reset design consists of:
 
 - `resetEasyCashierInventorySyncState`, which is configured to run once per day
-  at `24:00 UTC` and enqueue the work;
+  at `00:00 UTC` and enqueue the work;
 - `processEasyCashierInventoryStateReset`, which finds variants with stored
   state, paginates in pages of 250, and clears all state in batches of 50.
 
-The reset worker shares the single-concurrency inventory queue, so it cannot
+The reset worker shares the single-concurrency EasyCashier queue, so it cannot
 run simultaneously with an inventory adjustment.
 
 The reset schedule intentionally uses UTC and does not adjust for the
@@ -252,8 +252,7 @@ new-day sales with the previous day.
 
 | Queue | Purpose | Concurrency |
 | --- | --- | ---: |
-| `easycashier-sync` | Product create, update, SKU replacement, and delete | 1 |
-| `easycashier-inventory-sync` | Inventory adjustments and nightly state reset | 1 |
+| `easycashier-api` | Product changes, inventory synchronization, and nightly state reset | 1 |
 
 Product webhook jobs use stable IDs derived from product IDs and SKUs. Gadget's
 default duplicate-ID behavior is to throw an error if a background action with
@@ -278,6 +277,70 @@ Optional variables:
 The client caches the access token until shortly before expiration. Concurrent
 requests share an in-progress login, and an EasyCashier `401` response causes
 one forced token refresh and request retry.
+
+### API rate limiting
+
+EasyCashier allows 300 requests per minute. The application reserves a safety
+margin and permits at most 250 requests in any rolling 60-second window.
+Requests below that threshold are sent immediately; request 251 waits only
+until the oldest recorded request leaves the window.
+
+The limiter applies to article requests, paginated sales-report requests,
+authentication, and retries. Its timestamps are stored in the singleton
+`easyCashierRateLimitState` Gadget record, so the budget survives serverless
+process changes. Every EasyCashier-calling background job also uses the shared
+single-concurrency `easycashier-api` queue, preventing concurrent jobs from
+racing while reserving slots.
+
+If EasyCashier still responds with HTTP `429`, the client retries up to three
+times. It honors `Retry-After` when provided; otherwise it uses exponential
+backoff with jitter. Product worker timeouts are 15 minutes so a valid
+rate-limit wait does not cause a short action timeout.
+
+### Rate-limit stress test
+
+`runShopifyInventoryStressTest` is an opt-in development-only test targeting
+one existing Shopify variant at one location. It repeats this sequence 500
+times:
+
+1. Increment the Shopify `available` inventory by `1`.
+2. Fetch the complete EasyCashier sales report with `getTodaysSalesData()`.
+
+The worker uses the shared `easycashier-api` queue and the real
+`EasycashierClient`, so every report page and the authentication request count
+toward the same durable 250-per-60-second budget as production sync work. If a
+report contains more than 50 rows, a single `getTodaysSalesData()` call uses
+multiple rate-limited EasyCashier requests because the report is paginated.
+
+Every Shopify adjustment has a stable run-and-iteration idempotency key. If
+Gadget retries the worker, Shopify does not apply a successful increment twice.
+The target variant must already be stocked at the supplied location.
+
+Enqueue the test with:
+
+```js
+await api.runShopifyInventoryStressTest({
+  shopId: "71573209157",
+  variantId: "gid://shopify/ProductVariant/VARIANT_ID",
+  locationId: "gid://shopify/Location/LOCATION_ID",
+  confirmation: "INCREMENT_INVENTORY_AND_GET_SALES_500_TIMES",
+});
+```
+
+The entry action returns immediately with the background job ID and run ID.
+The completed worker reports the initial and final available quantity, the
+expected total delta (`+500`), the number of sales-report calls, and the total
+sales rows read. A fixed background-job ID prevents another run against the
+same variant and location while the first run is active. Both actions refuse
+to run when `GADGET_ENV` is `production`; Gadget development environments use
+their branch name as `GADGET_ENV`. The confirmation value must also match.
+
+The non-destructive mock test for the interleaved 500-adjustment/500-report
+sequence is available as:
+
+```text
+yarn test:stress
+```
 
 ## Shopify configuration
 

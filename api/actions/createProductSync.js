@@ -1,7 +1,8 @@
 import { EasycashierClient } from "../lib/EasycashierApiClient";
+import { createEasyCashierRateLimiter } from "../lib/easycashierRateLimit.js";
 
 /** @type { ActionRun } */
-export const run = async ({ params, logger }) => {
+export const run = async ({ params, logger, api }) => {
     try {
         const product = params.product;
         const variants = product?.variants;
@@ -10,7 +11,10 @@ export const run = async ({ params, logger }) => {
             throw new Error("Missing Shopify product variants for EasyCashier product creation");
         }
 
-        const easycashierClient = new EasycashierClient();
+        const easycashierClient = new EasycashierClient({
+            rateLimiter: createEasyCashierRateLimiter({ api, logger }),
+            logger,
+        });
         const normalizeSku = (value) => value == null ? "" : String(value).trim();
         const processedSkus = new Set();
         const responses = [];
@@ -135,4 +139,8 @@ export const run = async ({ params, logger }) => {
 export const params = {
     shopId: { type: "string" },
     product: { type: "object", additionalProperties: true },
+};
+
+export const options = {
+    timeoutMS: 900000,
 };

@@ -1,11 +1,15 @@
 import { EasycashierClient } from "../lib/EasycashierApiClient";
 import { findEasycashierArticle } from "../lib/findEasycashierArticle";
+import { createEasyCashierRateLimiter } from "../lib/easycashierRateLimit.js";
 
 const normalizeSku = (value) => value == null ? "" : String(value).trim();
 
 /** @type { ActionRun } */
 export const run = async ({ params, logger, api, connections }) => {
-    const easycashierClient = new EasycashierClient();
+    const easycashierClient = new EasycashierClient({
+        rateLimiter: createEasyCashierRateLimiter({ api, logger }),
+        logger,
+    });
     const productSkus = [...new Set(
         (Array.isArray(params.productSkus) ? params.productSkus : [])
             .map(normalizeSku)
@@ -99,4 +103,8 @@ export const params = {
     productId: { type: "string" },
     productTitle: { type: "string" },
     productSkus: { type: "array", items: { type: "string" } },
+};
+
+export const options = {
+    timeoutMS: 900000,
 };

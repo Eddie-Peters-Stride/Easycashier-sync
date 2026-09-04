@@ -1,8 +1,14 @@
 import axios from "axios";
 import { mockTodaysSalesData } from "./mockEasycashierSales.js";
+import { parseRetryAfterMs } from "./easycashierRateLimit.js";
 
 const DEFAULT_LOGIN_URL = "https://backoffice.easycashier.se/v1/login";
 const DEFAULT_TOKEN_REFRESH_BUFFER_MS = 60_000;
+const DEFAULT_RATE_LIMIT_RETRY_COUNT = 3;
+const DEFAULT_RATE_LIMIT_RETRY_BASE_MS = 1_000;
+
+const delay = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 export class EasycashierClient {
     constructor({
@@ -13,6 +19,10 @@ export class EasycashierClient {
         authHeaderName = process.env.EASYCASHIER_API_AUTH_HEADER_NAME || "x-auth-token",
         timeoutMs = 20_000,
         tokenRefreshBufferMs = DEFAULT_TOKEN_REFRESH_BUFFER_MS,
+        rateLimiter,
+        logger,
+        rateLimitRetryCount = DEFAULT_RATE_LIMIT_RETRY_COUNT,
+        sleep = delay,
     } = {}) {
         const apiBaseUrl = process.env.EASYCASHIER_API_BASE_URL;
         const companyId = process.env.EASYCASHIER_COMPANY_ID;
@@ -37,6 +47,10 @@ export class EasycashierClient {
         this.accessToken = null;
         this.accessTokenValidUntil = 0;
         this.loginPromise = null;
+        this.rateLimiter = rateLimiter;
+        this.logger = logger;
+        this.rateLimitRetryCount = Math.max(0, Number(rateLimitRetryCount) || 0);
+        this.sleep = sleep;
 
         this.loginApi = axios.create({
             timeout: timeoutMs,
@@ -53,8 +67,14 @@ export class EasycashierClient {
             },
         });
 
+        this.loginApi.interceptors.request.use(async (config) => {
+            await this.waitForRequestSlot(config);
+            return config;
+        });
+
         this.api.interceptors.request.use(async (config) => {
             const accessToken = await this.getValidAccessToken();
+            await this.waitForRequestSlot(config);
             config.headers.set(this.authHeaderName, accessToken);
             return config;
         });
@@ -63,6 +83,14 @@ export class EasycashierClient {
             (response) => response,
             async (error) => {
                 const request = error?.config;
+
+                if (error?.response?.status === 429 && request) {
+                    return await this.retryRateLimitedRequest({
+                        client: this.api,
+                        error,
+                        request,
+                    });
+                }
 
                 if (error?.response?.status !== 401 || !request || request._easycashierAuthRetried) {
                     throw error;
@@ -78,6 +106,64 @@ export class EasycashierClient {
                 return await this.api.request(request);
             }
         );
+
+        this.loginApi.interceptors.response.use(
+            (response) => response,
+            async (error) => {
+                const request = error?.config;
+
+                if (error?.response?.status !== 429 || !request) {
+                    throw error;
+                }
+
+                return await this.retryRateLimitedRequest({
+                    client: this.loginApi,
+                    error,
+                    request,
+                });
+            }
+        );
+    }
+
+    async waitForRequestSlot(config) {
+        if (!this.rateLimiter) {
+            return;
+        }
+
+        await this.rateLimiter({
+            method: config?.method?.toUpperCase(),
+            url: config?.url,
+        });
+    }
+
+    async retryRateLimitedRequest({ client, error, request }) {
+        const retryAttempt = Number(request._easycashierRateLimitRetryAttempt ?? 0);
+
+        if (retryAttempt >= this.rateLimitRetryCount) {
+            throw error;
+        }
+
+        request._easycashierRateLimitRetryAttempt = retryAttempt + 1;
+        const responseHeaders = error?.response?.headers;
+        const retryAfterHeader = responseHeaders?.get?.("retry-after")
+            ?? responseHeaders?.["retry-after"];
+        const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
+        const exponentialBackoffMs = DEFAULT_RATE_LIMIT_RETRY_BASE_MS * (2 ** retryAttempt);
+        const jitterMs = Math.floor(Math.random() * 250);
+        const waitMs = retryAfterMs ?? exponentialBackoffMs + jitterMs;
+
+        this.logger?.warn(
+            {
+                method: request.method?.toUpperCase(),
+                url: request.url,
+                retryAttempt: retryAttempt + 1,
+                waitMs,
+            },
+            "EasyCashier returned 429; retrying after backoff"
+        );
+
+        await this.sleep(waitMs);
+        return await client.request(request);
     }
 
     /**

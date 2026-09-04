@@ -1,5 +1,6 @@
 import { applyParams, save, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
+import { EASYCASHIER_QUEUE } from "../../../lib/easycashierQueue.js";
 
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections, trigger }) => {
@@ -46,7 +47,7 @@ export const onSuccess = async ({ record, logger, api, trigger }) => {
     product,
   }, {
     id: `create-product-sync-${product.id}`,
-    queue: { name: "easycashier-sync", maxConcurrency: 1 },
+    queue: EASYCASHIER_QUEUE,
     priority: "DEFAULT",
     retries: { retryCount: 2 },
   });

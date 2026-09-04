@@ -1,4 +1,5 @@
 import { EasycashierClient } from "../lib/EasycashierApiClient.js";
+import { createEasyCashierRateLimiter } from "../lib/easycashierRateLimit.js";
 import {
   adjustShopifyInventory,
   calculateShopifyInventoryDelta,
@@ -7,7 +8,11 @@ import {
 /** @type { ActionRun } */
 export const run = async ({ logger, api, connections, params }) => {
   try {
-    const salesResponse = await new EasycashierClient().getTodaysSalesData({
+    const easycashierClient = new EasycashierClient({
+      rateLimiter: createEasyCashierRateLimiter({ api, logger }),
+      logger,
+    });
+    const salesResponse = await easycashierClient.getTodaysSalesData({
       test: params.test,
     });
     const salesDate = salesResponse.date;

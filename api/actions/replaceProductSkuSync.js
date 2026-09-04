@@ -50,3 +50,7 @@ export const params = {
     previousTitle: { type: "string" },
     product: { type: "object", additionalProperties: true },
 };
+
+export const options = {
+    timeoutMS: 900000,
+};

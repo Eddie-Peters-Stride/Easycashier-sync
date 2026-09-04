@@ -1,13 +1,12 @@
+import { EASYCASHIER_QUEUE } from "../lib/easycashierQueue.js";
+
 /** @type { ActionRun } */
 export const run = async ({ api, logger }) => {
   const job = await api.enqueue(
     api.processEasyCashierInventoryStateReset,
     {},
     {
-      queue: {
-        name: "easycashier-inventory-sync",
-        maxConcurrency: 1,
-      },
+      queue: EASYCASHIER_QUEUE,
       priority: "HIGH",
       retries: {
         retryCount: 2,
@@ -32,7 +31,7 @@ export const options = {
   triggers: {
     api: false,
     scheduler: [
-      { every: "day", at: "24:00 UTC" },
+      { every: "day", at: "00:00 UTC" },
     ],
   },
 };
