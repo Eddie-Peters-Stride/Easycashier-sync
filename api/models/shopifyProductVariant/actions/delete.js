@@ -1,6 +1,5 @@
 import { deleteRecord, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
-import { enqueueShopifyProductVariantDeleteEasyCashierSync } from "../../../lib/manageProduct.js";
 
 /** @type { ActionRun } */
 export const run = async ({ params, record, logger, api, connections }) => {
@@ -19,13 +18,37 @@ export const run = async ({ params, record, logger, api, connections }) => {
 
 /** @type { ActionOnSuccess } */
 export const onSuccess = async ({ params, record, logger, api, connections, trigger }) => {
-  await enqueueShopifyProductVariantDeleteEasyCashierSync({
-    api,
-    logger,
-    trigger,
-    record,
-    deletedVariant: params.__easyCashierDeletedVariant ?? record.__easyCashierDeletedVariant,
-  }); 
+  const deletedVariant = params.__easyCashierDeletedVariant ?? record.__easyCashierDeletedVariant;
+  const sku = deletedVariant?.sku == null ? "" : String(deletedVariant.sku).trim();
+
+  if (!sku) {
+    logger.warn(
+      {
+        productId: deletedVariant?.productId,
+        variantId: deletedVariant?.id,
+      },
+      "Skipped EasyCashier variant deletion because the Shopify SKU was missing"
+    );
+    return;
+  }
+
+  await api.enqueue(api.deleteProductSync, {
+    shopId: String(deletedVariant.shopId),
+    productId: String(deletedVariant.productId),
+    productTitle: trigger?.payload?.title,
+    productSkus: [sku],
+  }, {
+    queue: { name: "easycashier-sync", maxConcurrency: 1 },
+  });
+
+  logger.info(
+    {
+      productId: deletedVariant.productId,
+      variantId: deletedVariant.id,
+      sku,
+    },
+    "Queued deleted Shopify variant for EasyCashier deletion"
+  );
 };
 
 /** @type { ActionOptions } */

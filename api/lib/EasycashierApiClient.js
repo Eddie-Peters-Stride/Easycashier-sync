@@ -147,8 +147,17 @@ export class EasycashierClient {
       * @param {Object} input - Product input data
       * @returns {Promise<Object>} Synced product data
       */
-    async getProducts() {
-        const res = await this.api.get(`/article`);
+    async getProducts({ searchValue } = {}) {
+        const normalizedSearchValue = searchValue == null ? "" : String(searchValue).trim();
+        const res = await this.api.get(`/article`, {
+            params: {
+                itemsPerPage: 50,
+                pageNumber: 1,
+                sortColumn: "articleNumber",
+                sortDirection: "asc",
+                ...(normalizedSearchValue ? { searchValue: normalizedSearchValue } : {}),
+            },
+        });
         const response = res.data;
         return response;
     }
@@ -172,11 +181,11 @@ export class EasycashierClient {
      * @returns {Promise<Object>} Synced product data
      */
     async deleteProduct({ input }) {
-        if (!input?.id) {
-            throw new Error("Missing product id for deletion");
+        if (!input?.articleNumber) {
+            throw new Error("Missing article number for deletion");
         }
 
-        const res = await this.api.delete(`/article/${input.id}`, {
+        const res = await this.api.delete(`/article/${encodeURIComponent(input.articleNumber)}`, {
             data: input,
         });
 
@@ -190,11 +199,11 @@ export class EasycashierClient {
      * @param {Object} input - Product input data
      * @returns {Promise<Object>} Synced product data
      */
-    async updateProduct({ input }) {
-        if (!input?.id) {
+    async updateProduct({ id, input }) {
+        if (!id) {
             throw new Error("Missing product id for update");
         }
-        const res = await this.api.put(`/article/${input.id}`, input);
+        const res = await this.api.put(`/article/${encodeURIComponent(id)}`, input);
         const response = res.data;
         return response;
     }

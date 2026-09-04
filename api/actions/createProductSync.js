@@ -11,13 +11,44 @@ export const run = async ({ params, logger }) => {
         }
 
         const easycashierClient = new EasycashierClient();
+        const normalizeSku = (value) => value == null ? "" : String(value).trim();
+        const processedSkus = new Set();
         const responses = [];
 
         for (const variant of variants) {
-            const sku = variant?.sku == null ? "" : String(variant.sku).trim();
+            const sku = normalizeSku(variant?.sku);
 
             if (!sku) {
                 throw new Error(`Missing SKU for Shopify variant ${variant?.id ?? "unknown"}`);
+            }
+
+            if (processedSkus.has(sku)) {
+                logger.info(
+                    { productId: product.id, variantId: variant.id, sku },
+                    "Skipped duplicate Shopify variant SKU during EasyCashier article creation"
+                );
+                continue;
+            }
+
+            const productsResponse = await easycashierClient.getProducts({
+                searchValue: sku,
+            });
+
+            if (!Array.isArray(productsResponse?.items)) {
+                throw new Error("EasyCashier products response did not contain an items array");
+            }
+
+            const existingArticle = productsResponse.items.find(
+                (article) => normalizeSku(article.articleNumber) === sku
+            );
+
+            if (existingArticle) {
+                logger.info(
+                    { productId: product.id, variantId: variant.id, sku },
+                    "Skipped EasyCashier article creation because the SKU already exists"
+                );
+                processedSkus.add(sku);
+                continue;
             }
 
             const productPayload = {
@@ -63,17 +94,19 @@ export const run = async ({ params, logger }) => {
 
             const response = await easycashierClient.createProduct({ input: productPayload });
             responses.push({ variantId: variant.id, response });
+            processedSkus.add(sku);
         }
 
         logger.info(
             {
                 productId: product.id,
                 variantCount: variants.length,
+                createdVariantCount: responses.length,
             },
-            "Product variants created successfully in EasyCashier"
+            "Shopify product variants created successfully in EasyCashier"
         );
 
-        return responses;
+        return { created: responses };
     }
     catch (error) {
         const status = error?.response?.status;
