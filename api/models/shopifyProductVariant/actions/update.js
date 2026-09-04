@@ -38,6 +38,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
           productSkus: [previousSku],
         }, {
           queue: { name: "easycashier-sync", maxConcurrency: 1 },
+          id: `delete-product-sync-${record.productId}-${previousSku}`,
+          priority: "DEFAULT",
+          retries: { retryCount: 2 },
         });
       }
 
@@ -83,6 +86,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
           product,
         }, {
           queue: { name: "easycashier-sync", maxConcurrency: 1 },
+          id: `replace-product-sku-sync-${product.id}-${previousSku}-${newSku}`,
+          priority: "DEFAULT",
+          retries: { retryCount: 2 },
         });
       } else {
         await api.enqueue(api.createProductSync, {
@@ -90,6 +96,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
           product,
         }, {
           queue: { name: "easycashier-sync", maxConcurrency: 1 },
+          id: `create-product-sync-${product.id}`,
+          priority: "DEFAULT",
+          retries: { retryCount: 2 },
         });
       }
 
@@ -140,6 +149,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     changes,
   }, {
     queue: { name: "easycashier-sync", maxConcurrency: 1 },
+    id: `update-product-sync-${record.productId}-${lookupArticleNumber}`,
+    priority: "DEFAULT",
+    retries: { retryCount: 2 },
   });
 
   logger.info(

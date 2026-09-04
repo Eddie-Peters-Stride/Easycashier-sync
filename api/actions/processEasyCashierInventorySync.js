@@ -1,12 +1,15 @@
 import { EasycashierClient } from "../lib/EasycashierApiClient.js";
-import { adjustShopifyInventory } from "../lib/shopifyInventory.js";
+import {
+  adjustShopifyInventory,
+  calculateShopifyInventoryDelta,
+} from "../lib/shopifyInventory.js";
 
 /** @type { ActionRun } */
-export const run = async ({ logger, api, connections }) => {
-  const easycashierClient = new EasycashierClient();
-
+export const run = async ({ logger, api, connections, params }) => {
   try {
-    const salesResponse = await easycashierClient.getTodaysSalesData();
+    const salesResponse = await new EasycashierClient().getTodaysSalesData({
+      test: params.test,
+    });
     const salesDate = salesResponse.date;
     const sales = salesResponse?.items ?? [];
 
@@ -41,7 +44,12 @@ export const run = async ({ logger, api, connections }) => {
 
     if (skus.length === 0) {
       logger.info("EasyCashier returned no sales with an article number and store number");
-      return { salesCount: sales.length, matchedVariantCount: 0, unmatchedSkus: [] };
+      return {
+        test: params.test,
+        salesCount: sales.length,
+        matchedVariantCount: 0,
+        unmatchedSkus: [],
+      };
     }
 
     const variants = [];
@@ -77,11 +85,14 @@ export const run = async ({ logger, api, connections }) => {
       for (const [storeNumber, currentSale] of Object.entries(currentSalesByStore)) {
         const currentQuantity = Number(currentSale.quantity);
         const savedQuantity = Number(savedSalesByStore[storeNumber]?.quantity ?? 0);
-        const newSalesQuantity = currentQuantity - savedQuantity;
+        const delta = calculateShopifyInventoryDelta({
+          salesQuantity: currentQuantity,
+          previouslySyncedSalesQuantity: savedQuantity,
+        });
 
-        if (newSalesQuantity !== 0) {
+        if (delta !== 0) {
           inventoryChanges.push({
-            delta: -newSalesQuantity,
+            delta,
             storeNumber,
             savedQuantity,
             currentQuantity,
@@ -90,6 +101,11 @@ export const run = async ({ logger, api, connections }) => {
       }
 
       if (inventoryChanges.length > 0) {
+        logger.info(
+          { inventoryChanges, sku, test: params.test },
+          "Applying EasyCashier inventory changes to Shopify"
+        );
+
         await adjustShopifyInventory({
           connections,
           variant,
@@ -124,6 +140,7 @@ export const run = async ({ logger, api, connections }) => {
     );
 
     return {
+      test: params.test,
       salesCount: sales.length,
       inventoryAdjustmentCount,
       matchedVariantCount: variants.length,
@@ -133,6 +150,10 @@ export const run = async ({ logger, api, connections }) => {
     logger.error({ error: error.message }, "EasyCashier inventory sync failed");
     throw error;
   }
+};
+
+export const params = {
+  test: { type: "boolean", default: false },
 };
 
 export const options = {

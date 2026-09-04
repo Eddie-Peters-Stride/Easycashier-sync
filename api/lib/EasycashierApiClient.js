@@ -1,4 +1,5 @@
 import axios from "axios";
+import { mockTodaysSalesData } from "./mockEasycashierSales.js";
 
 const DEFAULT_LOGIN_URL = "https://backoffice.easycashier.se/v1/login";
 const DEFAULT_TOKEN_REFRESH_BUFFER_MS = 60_000;
@@ -213,10 +214,15 @@ export class EasycashierClient {
      * Get all sales rows for today's date in Sweden.
      * @returns {Promise<{date: string, items: Object[]}>} Today's sales grouped by article and store
      */
-    async getTodaysSalesData() {
+    async getTodaysSalesData({ test = false } = {}) {
         const today = new Intl.DateTimeFormat("sv-SE", {
             timeZone: "Europe/Stockholm",
         }).format(new Date());
+
+        if (test) {
+            return { date: today, ...mockTodaysSalesData };
+        }
+
         const items = [];
         const itemsPerPage = 50;
 

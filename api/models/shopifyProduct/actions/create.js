@@ -45,7 +45,10 @@ export const onSuccess = async ({ record, logger, api, trigger }) => {
     shopId: String(trigger?.shopId ?? record.shopId),
     product,
   }, {
+    id: `create-product-sync-${product.id}`,
     queue: { name: "easycashier-sync", maxConcurrency: 1 },
+    priority: "DEFAULT",
+    retries: { retryCount: 2 },
   });
 
   logger.info(

@@ -53,6 +53,9 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       product: { ...product, variants: newVariants },
     }, {
       queue: { name: "easycashier-sync", maxConcurrency: 1 },
+      id: `create-product-sync-${product.id}`,
+      priority: "DEFAULT",
+      retries: { retryCount: 2 },
     });
 
     logger.info(
@@ -83,6 +86,9 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       changes: { description: product.title ?? "" },
     }, {
       queue: { name: "easycashier-sync", maxConcurrency: 1 },
+      id: `update-product-sync-${product.id}-${sku}`,
+      priority: "DEFAULT",
+      retries: { retryCount: 2 },
     });
   }
 

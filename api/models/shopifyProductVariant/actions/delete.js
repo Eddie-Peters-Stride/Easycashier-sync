@@ -39,6 +39,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     productSkus: [sku],
   }, {
     queue: { name: "easycashier-sync", maxConcurrency: 1 },
+    id: `delete-product-sync-${deletedVariant.productId}-${sku}`,
+    priority: "DEFAULT",
+    retries: { retryCount: 2 },
   });
 
   logger.info(

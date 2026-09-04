@@ -18,6 +18,17 @@ const ADJUST_INVENTORY_MUTATION = `
 `;
 
 /**
+ * Convert EasyCashier sales into an incremental Shopify inventory change.
+ * Positive sales reduce stock; negative sales (returns) increase stock.
+ * Sales reports are cumulative, so only the change since the previous report
+ * is applied.
+ */
+export const calculateShopifyInventoryDelta = ({
+  salesQuantity,
+  previouslySyncedSalesQuantity = 0,
+}) => -(salesQuantity - previouslySyncedSalesQuantity);
+
+/**
  * Apply one variant's EasyCashier sales differences to Shopify inventory.
  * The idempotency key makes retrying the same change safe.
  */

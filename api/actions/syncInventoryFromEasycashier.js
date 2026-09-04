@@ -3,10 +3,10 @@
  * All EasyCashier and Shopify requests run inside the queued worker action.
  * @type {ActionRun}
  */
-export const run = async ({ api, logger }) => {
+export const run = async ({ api, logger, params }) => {
   const job = await api.enqueue(
     api.processEasyCashierInventorySync,
-    {},
+    { test: params.test },
     {
       queue: {
         name: "easycashier-inventory-sync",
@@ -20,14 +20,19 @@ export const run = async ({ api, logger }) => {
   );
 
   logger.info(
-    { jobId: job?.id ?? null },
+    { jobId: job?.id ?? null, test: params.test },
     "Queued EasyCashier inventory sync"
   );
 
   return {
     queued: true,
     jobId: job?.id ?? null,
+    test: params.test,
   };
+};
+
+export const params = {
+  test: { type: "boolean", default: false },
 };
 
 export const options = {
