@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { EASYCASHIER_QUEUE } from "../lib/easycashierQueue.js";
+import { EASYCASHIER_QUEUE } from "../../lib/easycashierQueue.js";
 import {
   SHOPIFY_INVENTORY_STRESS_ADJUSTMENT_COUNT,
   SHOPIFY_INVENTORY_STRESS_CONFIRMATION,
-} from "../lib/shopifyInventoryStressTest.js";
+} from "../../lib/shopifyInventoryStressTest.js";
 
 export const run: ActionRun = async ({ params, logger, api, connections }) => {
   if (process.env.GADGET_ENV === "production") {

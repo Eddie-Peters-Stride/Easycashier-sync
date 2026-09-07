@@ -225,34 +225,11 @@ quantity cumulatively to simulate additional sales.
 `test: true` is not a dry run: it modifies real Shopify inventory in the
 selected Gadget environment.
 
-## Nightly inventory-state reset
-
-The reset design consists of:
-
-- `resetEasyCashierInventorySyncState`, which is configured to run once per day
-  at `00:00 UTC` and enqueue the work;
-- `processEasyCashierInventoryStateReset`, which finds variants with stored
-  state, paginates in pages of 250, and clears all state in batches of 50.
-
-The reset worker shares the single-concurrency EasyCashier queue, so it cannot
-run simultaneously with an inventory adjustment.
-
-The reset schedule intentionally uses UTC and does not adjust for the
-`Europe/Stockholm` timezone. The reset has no date parameter and removes every
-stored `easyCashierInventorySyncState`. This is separate from the inventory
-report date, which is still calculated in `Europe/Stockholm` by the
-EasyCashier client.
-
-The inventory processor already ignores saved quantities when the stored
-`salesDate` differs from today's Swedish date. The nightly reset removes stale
-data, but the date comparison remains the primary protection against comparing
-new-day sales with the previous day.
-
 ## Background queues and retries
 
 | Queue | Purpose | Concurrency |
 | --- | --- | ---: |
-| `easycashier-api` | Product changes, inventory synchronization, and nightly state reset | 1 |
+| `easycashier-api` | Product changes and inventory synchronization | 1 |
 
 Product webhook jobs use stable IDs derived from product IDs and SKUs. Gadget's
 default duplicate-ID behavior is to throw an error if a background action with
@@ -367,5 +344,4 @@ Before enabling inventory synchronization on a short interval:
 3. Run a controlled mock test against a development store.
 4. Confirm the first cumulative quantity and a subsequent unchanged quantity.
 5. Confirm negative EasyCashier quantities increase Shopify inventory.
-6. Verify the nightly reset action in the target environment.
-7. Review Gadget problems and logs before deployment.
+6. Review Gadget problems and logs before deployment.
