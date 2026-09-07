@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EASYCASHIER_QUEUE } from "../lib/easycashierQueue.js";
 
 /**
@@ -6,10 +7,12 @@ import { EASYCASHIER_QUEUE } from "../lib/easycashierQueue.js";
  * @type {ActionRun}
  */
 export const run = async ({ api, logger, params }) => {
+  const backgroundActionId = `easycashier-inventory-sync-${randomUUID()}`;
   const job = await api.enqueue(
     api.processEasyCashierInventorySync,
     { test: params.test },
     {
+      id: backgroundActionId,
       queue: EASYCASHIER_QUEUE,
       priority: "HIGH",
       retries: {

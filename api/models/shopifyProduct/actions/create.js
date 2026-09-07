@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { applyParams, save, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
 import { EASYCASHIER_QUEUE } from "../../../lib/easycashierQueue.js";
@@ -42,11 +43,13 @@ export const onSuccess = async ({ record, logger, api, trigger }) => {
     return;
   }
 
+  const backgroundActionId = `create-product-sync-${product.id}-${randomUUID()}`;
+
   await api.enqueue(api.createProductSync, {
     shopId: String(trigger?.shopId ?? record.shopId),
     product,
   }, {
-    id: `create-product-sync-${product.id}`,
+    id: backgroundActionId,
     queue: EASYCASHIER_QUEUE,
     priority: "DEFAULT",
     retries: { retryCount: 2 },

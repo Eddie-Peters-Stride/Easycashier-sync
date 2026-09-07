@@ -33,6 +33,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
 
     if (!newSku) {
       if (previousSku) {
+        const backgroundActionId =
+          `delete-product-sync-${record.productId}-${previousSku}-${randomUUID()}`;
+
         await api.enqueue(api.deleteProductSync, {
           shopId,
           productId: String(record.productId),
@@ -40,7 +43,7 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
           productSkus: [previousSku],
         }, {
           queue: EASYCASHIER_QUEUE,
-          id: `delete-product-sync-${record.productId}-${previousSku}`,
+          id: backgroundActionId,
           priority: "DEFAULT",
           retries: { retryCount: 2 },
         });
@@ -81,6 +84,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
       };
 
       if (previousSku) {
+        const backgroundActionId =
+          `replace-product-sku-sync-${product.id}-${previousSku}-${newSku}-${randomUUID()}`;
+
         await api.enqueue(api.replaceProductSkuSync, {
           shopId,
           previousSku,
@@ -88,17 +94,19 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
           product,
         }, {
           queue: EASYCASHIER_QUEUE,
-          id: `replace-product-sku-sync-${product.id}-${previousSku}-${newSku}`,
+          id: backgroundActionId,
           priority: "DEFAULT",
           retries: { retryCount: 2 },
         });
       } else {
+        const backgroundActionId = `create-product-sync-${product.id}-${randomUUID()}`;
+
         await api.enqueue(api.createProductSync, {
           shopId,
           product,
         }, {
           queue: EASYCASHIER_QUEUE,
-          id: `create-product-sync-${product.id}`,
+          id: backgroundActionId,
           priority: "DEFAULT",
           retries: { retryCount: 2 },
         });

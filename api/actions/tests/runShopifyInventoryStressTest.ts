@@ -26,6 +26,7 @@ export const run: ActionRun = async ({ params, logger, api, connections }) => {
 
   const runId = randomUUID();
   const targetKey = `${shopId}-${variantId.split("/").pop()}-${locationId.split("/").pop()}`;
+  const backgroundActionId = `shopify-inventory-stress-${targetKey}-${runId}`;
   const job = await api.enqueue(
     api.processShopifyInventoryStressTest,
     {
@@ -36,7 +37,7 @@ export const run: ActionRun = async ({ params, logger, api, connections }) => {
       variantId,
     },
     {
-      id: `shopify-inventory-stress-${targetKey}`,
+      id: backgroundActionId,
       queue: EASYCASHIER_QUEUE,
       retries: { retryCount: 1 },
     }

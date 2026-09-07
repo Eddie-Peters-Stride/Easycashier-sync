@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { applyParams, save, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
 import { EASYCASHIER_QUEUE } from "../../../lib/easycashierQueue.js";
@@ -49,12 +50,14 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
   );
 
   if (newVariants.length > 0) {
+    const backgroundActionId = `create-product-sync-${product.id}-${randomUUID()}`;
+
     await api.enqueue(api.createProductSync, {
       shopId: String(trigger?.shopId ?? record.shopId),
       product: { ...product, variants: newVariants },
     }, {
       queue: EASYCASHIER_QUEUE,
-      id: `create-product-sync-${product.id}`,
+      id: backgroundActionId,
       priority: "DEFAULT",
       retries: { retryCount: 2 },
     });
@@ -71,6 +74,8 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       continue;
     }
 
+    const backgroundActionId = `update-product-sync-${product.id}-${sku}-${randomUUID()}`;
+
     await api.enqueue(api.updateProductSync, {
       shopId: String(trigger?.shopId ?? record.shopId),
       productId: String(product.id),
@@ -79,7 +84,7 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       changes: { description: product.title ?? "" },
     }, {
       queue: EASYCASHIER_QUEUE,
-      id: `update-product-sync-${product.id}-${sku}`,
+      id: backgroundActionId,
       priority: "DEFAULT",
       retries: { retryCount: 2 },
     });

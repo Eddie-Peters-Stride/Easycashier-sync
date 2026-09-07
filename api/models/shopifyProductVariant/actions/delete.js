@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { deleteRecord, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
 import { EASYCASHIER_QUEUE } from "../../../lib/easycashierQueue.js";
@@ -33,6 +34,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     return;
   }
 
+  const backgroundActionId =
+    `delete-product-sync-${deletedVariant.productId}-${sku}-${randomUUID()}`;
+
   await api.enqueue(api.deleteProductSync, {
     shopId: String(deletedVariant.shopId),
     productId: String(deletedVariant.productId),
@@ -40,7 +44,7 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     productSkus: [sku],
   }, {
     queue: EASYCASHIER_QUEUE,
-    id: `delete-product-sync-${deletedVariant.productId}-${sku}`,
+    id: backgroundActionId,
     priority: "DEFAULT",
     retries: { retryCount: 2 },
   });
