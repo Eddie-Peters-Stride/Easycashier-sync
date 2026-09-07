@@ -44,15 +44,6 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     priority: "DEFAULT",
     retries: { retryCount: 2 },
   });
-
-  logger.info(
-    {
-      productId: deletedVariant.productId,
-      variantId: deletedVariant.id,
-      sku,
-    },
-    "Queued deleted Shopify variant for EasyCashier deletion"
-  );
 };
 
 /** @type { ActionOptions } */

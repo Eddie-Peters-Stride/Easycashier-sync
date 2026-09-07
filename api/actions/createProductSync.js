@@ -27,10 +27,6 @@ export const run = async ({ params, logger, api }) => {
             }
 
             if (processedSkus.has(sku)) {
-                logger.info(
-                    { productId: product.id, variantId: variant.id, sku },
-                    "Skipped duplicate Shopify variant SKU during EasyCashier article creation"
-                );
                 continue;
             }
 
@@ -47,10 +43,6 @@ export const run = async ({ params, logger, api }) => {
             );
 
             if (existingArticle) {
-                logger.info(
-                    { productId: product.id, variantId: variant.id, sku },
-                    "Skipped EasyCashier article creation because the SKU already exists"
-                );
                 processedSkus.add(sku);
                 continue;
             }
@@ -86,29 +78,10 @@ export const run = async ({ params, logger, api }) => {
                 stockEntries: [],
             };
 
-            logger.info(
-                {
-                    shopId: params.shopId,
-                    productId: product.id,
-                    variantId: variant.id,
-                    productPayload,
-                },
-                "Creating Shopify product variant in EasyCashier"
-            );
-
             const response = await easycashierClient.createProduct({ input: productPayload });
             responses.push({ variantId: variant.id, response });
             processedSkus.add(sku);
         }
-
-        logger.info(
-            {
-                productId: product.id,
-                variantCount: variants.length,
-                createdVariantCount: responses.length,
-            },
-            "Shopify product variants created successfully in EasyCashier"
-        );
 
         return { created: responses };
     }

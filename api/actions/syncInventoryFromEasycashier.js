@@ -18,10 +18,6 @@ export const run = async ({ api, logger, params }) => {
     }
   );
 
-  logger.info(
-    { jobId: job?.id ?? null, test: params.test },
-    "Queued EasyCashier inventory sync"
-  );
 
   return {
     queued: true,
@@ -34,9 +30,10 @@ export const params = {
   test: { type: "boolean", default: false },
 };
 
+// Synk between 08:00 and 22:55 every 5 mminutes
 export const options = {
   triggers: {
     api: true,
-    // scheduler: [{ cron: "*/15 * * * *" }],
+    scheduler: [{ cron: "*/5 8-22 * * *" }],
   },
 };

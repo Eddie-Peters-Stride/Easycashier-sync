@@ -106,11 +106,6 @@ export const run = async ({ logger, api, connections, params }) => {
       }
 
       if (inventoryChanges.length > 0) {
-        logger.info(
-          { inventoryChanges, sku, test: params.test },
-          "Applying EasyCashier inventory changes to Shopify"
-        );
-
         await adjustShopifyInventory({
           connections,
           variant,

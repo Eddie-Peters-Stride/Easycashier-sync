@@ -31,16 +31,6 @@ export const run = async ({ params, logger, api }) => {
         product,
     });
 
-    logger.info(
-        {
-            productId: product.id,
-            variantId: product.variants[0].id,
-            previousSku,
-            newSku,
-        },
-        "Replaced EasyCashier article after Shopify variant SKU change"
-    );
-
     return { previousSku, newSku, deletion, creation };
 };
 

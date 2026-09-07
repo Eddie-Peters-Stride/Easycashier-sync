@@ -79,14 +79,6 @@ export const run = async ({ params, logger, api, connections }) => {
             input: productPayload,
         });
 
-        logger.info(
-            {
-                lookupArticleNumber,
-                matchedBy: lookup.matchedBy,
-                changes: params.changes,
-            },
-            "Updated EasyCashier product fields"
-        );
 
         return { updated: true, lookupArticleNumber, response };
     } catch (error) {

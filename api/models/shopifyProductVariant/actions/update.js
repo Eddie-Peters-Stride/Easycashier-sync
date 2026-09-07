@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { applyParams, save, ActionOptions } from "gadget-server";
 import { preventCrossShopDataAccess } from "gadget-server/shopify";
 import { EASYCASHIER_QUEUE } from "../../../lib/easycashierQueue.js";
@@ -103,16 +104,6 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
         });
       }
 
-      logger.info(
-        {
-          variantId: record.id,
-          previousSku,
-          newSku,
-        },
-        previousSku
-          ? "Queued EasyCashier article replacement after Shopify SKU change"
-          : "Queued EasyCashier article creation after Shopify SKU was assigned"
-      );
       return;
     }
   }
@@ -142,6 +133,9 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     return;
   }
 
+  const backgroundActionId =
+    `update-product-sync-${record.productId}-${lookupArticleNumber}-${randomUUID()}`;
+
   await api.enqueue(api.updateProductSync, {
     shopId: String(record.shopId ?? trigger?.shopId),
     productId: String(record.productId),
@@ -150,19 +144,10 @@ export const onSuccess = async ({ params, record, logger, api, connections, trig
     changes,
   }, {
     queue: EASYCASHIER_QUEUE,
-    id: `update-product-sync-${record.productId}-${lookupArticleNumber}`,
+    id: backgroundActionId,
     priority: "DEFAULT",
     retries: { retryCount: 2 },
   });
-
-  logger.info(
-    {
-      variantId: record.id,
-      lookupArticleNumber,
-      changedFields: Object.keys(changes),
-    },
-    "Queued changed Shopify variant fields for EasyCashier update"
-  );
 };
 
 /** @type { ActionOptions } */

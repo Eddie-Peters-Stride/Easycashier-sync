@@ -51,15 +51,6 @@ export const onSuccess = async ({ record, logger, api, trigger }) => {
     priority: "DEFAULT",
     retries: { retryCount: 2 },
   });
-
-  logger.info(
-    {
-      productId: product.id,
-      shopId: trigger?.shopId ?? record.shopId,
-      variantCount: variants.length,
-    },
-    "Queued Shopify product variants for EasyCashier creation"
-  );
 };
 
 /** @type { ActionOptions } */

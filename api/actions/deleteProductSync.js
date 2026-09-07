@@ -70,15 +70,6 @@ export const run = async ({ params, logger, api, connections }) => {
             );
         }
 
-        logger.info(
-            {
-                productId: params.productId,
-                requestedSkus: productSkus,
-                deletedArticleNumbers: deleted.map(({ articleNumber }) => articleNumber),
-            },
-            "Deleted EasyCashier articles by exact Shopify SKU match"
-        );
-
         return { deleted, missingSkus };
     } catch (error) {
         const status = error?.response?.status;

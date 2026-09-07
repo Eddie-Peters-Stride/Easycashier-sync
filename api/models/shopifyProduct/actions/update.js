@@ -58,14 +58,6 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       priority: "DEFAULT",
       retries: { retryCount: 2 },
     });
-
-    logger.info(
-      {
-        productId: product.id,
-        variantIds: newVariants.map((variant) => variant.id),
-      },
-      "Queued new Shopify variants for EasyCashier creation"
-    );
   }
 
   if (!record.changed("title")) {
@@ -92,14 +84,6 @@ export const onSuccess = async ({ params, record, logger, api, trigger }) => {
       retries: { retryCount: 2 },
     });
   }
-
-  logger.info(
-    {
-      productId: product.id,
-      articleNumbers: variants.map((variant) => variant.sku).filter(Boolean),
-    },
-    "Queued Shopify product title update to EasyCashier"
-  );
 };
 
 /** @type { ActionOptions } */
