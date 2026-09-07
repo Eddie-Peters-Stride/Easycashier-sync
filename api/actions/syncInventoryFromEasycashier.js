@@ -37,6 +37,6 @@ export const params = {
 export const options = {
   triggers: {
     api: true,
-    scheduler: [{ cron: "*/5 8-22 * * *" }],
+    scheduler: [{ cron: "*/5 * * * *" }],
   },
 };
