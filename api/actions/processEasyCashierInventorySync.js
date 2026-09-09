@@ -229,6 +229,7 @@ export const run = async ({ logger, api, connections, params }) => {
     }
 
     const matchedSkus = new Set(matchedVariants.map(({ lookupValue }) => lookupValue));
+    const matchedVariantIds = matchedVariants.map(({ variant }) => String(variant.id));
     const unmatchedSkus = skus.filter(
       (sku) => !matchedSkus.has(sku) && !lookupFailedSkus.has(sku)
     );
@@ -238,6 +239,7 @@ export const run = async ({ logger, api, connections, params }) => {
         salesCount: sales.length,
         inventoryAdjustmentCount,
         matchedVariantCount: matchedVariants.length,
+        matchedVariantIds,
         unmatchedSkuCount: unmatchedSkus.length,
         lookupFailedSkuCount: lookupFailedSkus.size,
         updatedProductCount: updatedProducts.length,
