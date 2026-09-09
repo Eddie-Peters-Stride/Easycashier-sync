@@ -166,13 +166,14 @@ export const run = async ({ logger, api, connections, params }) => {
         variantId: String(variant.id),
       };
 
+      let inventoryChanges = [];
+
       try {
         const currentSalesByStore = salesBySku.get(lookupValue);
         const savedState = variant.easyCashierInventorySyncState ?? {};
         const savedSalesByStore = savedState.salesDate === salesDate
           ? savedState.salesByStore ?? {}
           : {};
-        const inventoryChanges = [];
 
         for (const [storeNumber, currentSale] of Object.entries(currentSalesByStore)) {
           const currentQuantity = Number(currentSale.quantity);
@@ -212,23 +213,18 @@ export const run = async ({ logger, api, connections, params }) => {
           },
         });
 
-        updatedProducts.push({
-          ...productContext,
-          inventoryChangeCount: inventoryChanges.length,
-          inventoryChanges,
-        });
-        logger.info(
-          {
+        if (inventoryChanges.length > 0) {
+          updatedProducts.push({
             ...productContext,
             inventoryChangeCount: inventoryChanges.length,
             inventoryChanges,
-          },
-          "EasyCashier inventory product updated"
-        );
+          });
+        }
       } catch (error) {
-        const failure = { ...productContext, error: error.message };
-        failedProducts.push(failure);
-        logger.error(failure, "EasyCashier inventory product not updated");
+        if (inventoryChanges.length > 0) {
+          const failure = { ...productContext, error: getErrorMessage(error) };
+          failedProducts.push(failure);
+        }
       }
     }
 
@@ -246,6 +242,10 @@ export const run = async ({ logger, api, connections, params }) => {
         lookupFailedSkuCount: lookupFailedSkus.size,
         updatedProductCount: updatedProducts.length,
         failedProductCount: failedProducts.length,
+        updatedProducts,
+        failedProducts,
+        unmatchedSkus,
+        lookupFailedSkus: [...lookupFailedSkus],
       },
       "EasyCashier inventory sync completed"
     );
