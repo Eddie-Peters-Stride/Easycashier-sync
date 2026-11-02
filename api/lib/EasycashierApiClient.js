@@ -11,6 +11,20 @@ const delay = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 export class EasycashierClient {
+    /**
+     * @param {object} [options]
+     * @param {string} [options.host]
+     * @param {string} [options.loginUrl]
+     * @param {string} [options.username]
+     * @param {string} [options.password]
+     * @param {string} [options.authHeaderName]
+     * @param {number} [options.timeoutMs]
+     * @param {number} [options.tokenRefreshBufferMs]
+     * @param {(request: { method?: string, url?: string }) => Promise<void>} [options.rateLimiter]
+     * @param {{ warn: (details: object, message: string) => void }} [options.logger]
+     * @param {number} [options.rateLimitRetryCount]
+     * @param {(milliseconds: number) => Promise<void>} [options.sleep]
+     */
     constructor({
         host,
         loginUrl = process.env.EASYCASHIER_LOGIN_URL || DEFAULT_LOGIN_URL,
