@@ -296,7 +296,7 @@ The target variant must already be stocked at the supplied location.
 Enqueue the test with:
 
 ```js
-await api.runShopifyInventoryStressTest({
+await api.tests.runShopifyInventoryStressTest({
   shopId: "71573209157",
   variantId: "gid://shopify/ProductVariant/VARIANT_ID",
   locationId: "gid://shopify/Location/LOCATION_ID",

@@ -11,14 +11,11 @@ export const schema: GadgetModel = {
     fields: {
       body: true,
       category: true,
-      customCollections: true,
-      featuredMedia: true,
       handle: true,
       hasVariantsThatRequiresComponents: {
         filterIndex: false,
         searchIndex: false,
       },
-      media: true,
       options: true,
       productType: true,
       publishedAt: { searchIndex: false },

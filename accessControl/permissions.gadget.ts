@@ -12,29 +12,6 @@ export const permissions: GadgetPermissions = {
     "shopify-app-users": {
       storageKey: "Role-Shopify-App",
       models: {
-        shopifyCatalog: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyCatalog.gelly",
-          },
-        },
-        shopifyCollect: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyCollect.gelly",
-          },
-        },
-        shopifyCollection: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyCollection.gelly",
-          },
-        },
-        shopifyFile: {
-          read: {
-            filter: "accessControl/filters/shopify/shopifyFile.gelly",
-          },
-        },
         shopifyGdprRequest: {
           read: {
             filter:
@@ -45,28 +22,10 @@ export const permissions: GadgetPermissions = {
             update: true,
           },
         },
-        shopifyPriceList: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyPriceList.gelly",
-          },
-        },
-        shopifyPriceListPrice: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyPriceListPrice.gelly",
-          },
-        },
         shopifyProduct: {
           read: {
             filter:
               "accessControl/filters/shopify/shopifyProduct.gelly",
-          },
-        },
-        shopifyProductMedia: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyProductMedia.gelly",
           },
         },
         shopifyProductOption: {
@@ -79,18 +38,6 @@ export const permissions: GadgetPermissions = {
           read: {
             filter:
               "accessControl/filters/shopify/shopifyProductVariant.gelly",
-          },
-        },
-        shopifyProductVariantMedia: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyProductVariantMedia.gelly",
-          },
-        },
-        shopifyQuantityPriceBreak: {
-          read: {
-            filter:
-              "accessControl/filters/shopify/shopifyQuantityPriceBreak.gelly",
           },
         },
         shopifyShop: {
@@ -122,6 +69,29 @@ export const permissions: GadgetPermissions = {
     },
     unauthenticated: {
       storageKey: "unauthenticated",
+    },
+    "Shopify Flow": {
+      storageKey: "5tzfibMZVDH0",
+      default: {
+        read: true,
+      },
+      models: {
+        shopifyProduct: {
+          read: true,
+          actions: {
+            update: true,
+          },
+        },
+        shopifyProductVariant: {
+          read: true,
+          actions: {
+            update: true,
+          },
+        },
+      },
+      actions: {
+        authorizeProductTitleDigest: true,
+      },
     },
   },
 };

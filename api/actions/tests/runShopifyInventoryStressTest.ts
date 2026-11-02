@@ -28,7 +28,7 @@ export const run: ActionRun = async ({ params, logger, api, connections }) => {
   const targetKey = `${shopId}-${variantId.split("/").pop()}-${locationId.split("/").pop()}`;
   const backgroundActionId = `shopify-inventory-stress-${targetKey}-${runId}`;
   const job = await api.enqueue(
-    api.processShopifyInventoryStressTest,
+    api.tests.processShopifyInventoryStressTest,
     {
       confirmation: SHOPIFY_INVENTORY_STRESS_CONFIRMATION,
       locationId,
