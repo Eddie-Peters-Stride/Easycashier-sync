@@ -8,10 +8,5 @@ export const run = async ({ params, record, logger, api, connections }) => {
   await save(record);
 };
 
-/** @type { ActionOnSuccess } */
-export const onSuccess = async ({ params, record, logger, api, connections }) => {
-  // Your logic goes here
-};
-
 /** @type { ActionOptions } */
 export const options = { actionType: "create" };
