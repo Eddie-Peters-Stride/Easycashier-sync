@@ -89,6 +89,9 @@ export const permissions: GadgetPermissions = {
           },
         },
       },
+      actions: {
+        authorizeProductTitleDigest: true,
+      },
     },
   },
 };
